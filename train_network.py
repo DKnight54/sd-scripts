@@ -783,10 +783,7 @@ class NetworkTrainer:
                         else:
                             raise NotImplementedError("multipliers for each sample is not supported yet")
                         # print(f"set multiplier: {multipliers}")
-                        if args.ddp_gradient_as_bucket_view or args.ddp_static_graph:
-                            accelerator.unwrap_model(network).set_multiplier(multipliers)
-                        else:
-                            network.set_multiplier(multipliers)
+                        network.set_multiplier(multipliers)
 
                     with torch.set_grad_enabled(train_text_encoder), accelerator.autocast():
                         # Get the text embedding for conditioning
