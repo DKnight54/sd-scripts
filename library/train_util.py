@@ -4818,6 +4818,8 @@ def sample_image_inference(accelerator: Accelerator, args: argparse.Namespace, p
             controlnet=controlnet,
             controlnet_image=controlnet_image,
         )
+    with torch.cuda.device(torch.cuda.current_device()):
+        torch.cuda.empty_cache()
     image = pipeline.latents_to_image(latents)[0]
     # adding accelerator.wait_for_everyone() here should sync up and ensure that sample images are saved in the same order as the original prompt list
     ts_str = time.strftime("%Y%m%d%H%M%S", time.localtime())
