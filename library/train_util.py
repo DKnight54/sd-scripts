@@ -1562,6 +1562,8 @@ class DreamBoothDataset(BaseDataset):
         self.size = min(self.width, self.height)  # 短いほう
         self.prior_loss_weight = prior_loss_weight
         self.latents_cache = None
+        self.reg_infos: List[Tuple[ImageInfo, DreamBoothSubset]] = []
+        self.train_infos: List[Tuple[ImageInfo, DreamBoothSubset]] = []
 
         self.enable_bucket = enable_bucket
         if self.enable_bucket:
@@ -1690,7 +1692,6 @@ class DreamBoothDataset(BaseDataset):
         logger.info("prepare images.")
         num_train_images = 0
         num_reg_images = 0
-        reg_infos: List[Tuple[ImageInfo, DreamBoothSubset]] = []
         for subset in subsets:
             if subset.num_repeats < 1:
                 logger.warning(
@@ -1721,8 +1722,9 @@ class DreamBoothDataset(BaseDataset):
                 if size is not None:
                     info.image_size = size
                 if subset.is_reg:
-                    reg_infos.append((info, subset))
+                    self.reg_infos.append((info, subset))
                 else:
+                    self.train_infos.append((info, subset))
                     self.register_image(info, subset)
 
             subset.img_count = len(img_paths)
@@ -1732,8 +1734,8 @@ class DreamBoothDataset(BaseDataset):
         self.num_train_images = num_train_images
 
         logger.info(f"{num_reg_images} reg images.")
-        random.shuffle(reg_infos)
         if num_train_images < num_reg_images:
+            random.shuffle(self.reg_infos)
             logger.warning("some of reg images are not used / 正則化画像の数が多いので、一部使用されない正則化画像があります")
 
         if num_reg_images == 0:
@@ -1742,20 +1744,22 @@ class DreamBoothDataset(BaseDataset):
             # num_repeatsを計算する：どうせ大した数ではないのでループで処理する
             n = 0
             first_loop = True
+            reg_img_log = f"Dataset seed: {self.seed}"
             while n < num_train_images:
-                for info, subset in reg_infos:
+                for info, subset in self.reg_infos:
                     if first_loop:
                         self.register_image(info, subset)
-                        logger.info(f"Registering image: {info.absolute_path}")
+                        reg_img_log += f"\nRegistering image: {info.absolute_path}"
                         n += info.num_repeats
                     else:
                         info.num_repeats += 1  # rewrite registered info
-                        logger.info(f"Registering image: {info.absolute_path}")
+                        reg_img_log += f"\nRegistering image: {info.absolute_path}"
                         n += 1
                     if n >= num_train_images:
                         break
                 first_loop = False
-                random.shuffle(reg_infos)
+                random.shuffle(self.reg_infos)
+            logger.info(reg_img_log)
 
         self.num_reg_images = num_reg_images
 
