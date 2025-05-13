@@ -846,7 +846,7 @@ class NetworkTrainer:
             )
 
         loss_recorder = train_util.LossRecorder()
-        del train_dataset_group
+
 
         # callback for step start
         if hasattr(accelerator.unwrap_model(network), "on_step_start"):
@@ -1097,7 +1097,8 @@ class NetworkTrainer:
             if args.sample_every_n_epochs is not None and (epoch + 1)% args.sample_every_n_epochs == 0:
                 example_tuple = (latents, batch["captions"])
                 self.sample_images(accelerator, args, epoch + 1, global_step, accelerator.device, vae, tokenizer, text_encoder, unet, example_tuple)
-
+            if args.force_reload_reg is not None
+                train_dataset_group.force_reload_reg()
             # end of epoch
 
         # metadata["ss_epoch"] = str(num_train_epochs)
