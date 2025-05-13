@@ -30,6 +30,7 @@ import subprocess
 from io import BytesIO
 from accelerate.utils import gather_object
 import toml
+import copy
 
 from tqdm import tqdm
 
@@ -684,7 +685,11 @@ class BaseDataset(torch.utils.data.Dataset):
 
     def set_seed(self, seed):
         self.seed = seed
-
+        
+    def force_reload_reg(self):
+        #does nothing unless overridden in 
+        return
+        
     def set_caching_mode(self, mode):
         self.caching_mode = mode
 
@@ -1742,11 +1747,12 @@ class DreamBoothDataset(BaseDataset):
             logger.warning("no regularization images / 正則化画像が見つかりませんでした")
         else:
             # num_repeatsを計算する：どうせ大した数ではないのでループで処理する
+            temp_reg_infos = copy.deepcopy(self.reg_infos)
             n = 0
             first_loop = True
             reg_img_log = f"Dataset seed: {self.seed}"
             while n < num_train_images:
-                for info, subset in self.reg_infos:
+                for info, subset in temp_reg_infos:
                     if first_loop:
                         self.register_image(info, subset)
                         reg_img_log += f"\nRegistering image: {info.absolute_path}"
@@ -1758,10 +1764,48 @@ class DreamBoothDataset(BaseDataset):
                     if n >= num_train_images:
                         break
                 first_loop = False
-                random.shuffle(self.reg_infos)
+                random.shuffle(temp_reg_infos)
             logger.info(reg_img_log)
+            del temp_reg_infos
 
         self.num_reg_images = num_reg_images
+    
+    def force_reload_reg(self):
+    #override to for loading random reg images if num_reg_images < num_train_images
+        if self.num_reg_images == 0:
+            logger.warning("no regularization images / 正則化画像が見つかりませんでした")
+            return
+            
+        logger.info(f"Forced random reload of reg images.")
+        if self.num_train_images < self.num_reg_images:
+            for info in self.reg_infos:
+                if info.image_key in self.image_data:
+                    self.image_data.pop(info.image_key, None)
+                    self.image_to_subset.pop(info.image_key, None)
+                
+            random.shuffle(self.reg_infos)
+            temp_reg_infos = copy.deepcopy(self.reg_infos)
+            n = 0
+            first_loop = True
+            reg_img_log = f"Dataset seed: {self.seed}"
+            while n < self.num_train_images:
+                for info, subset in temp_reg_infos:
+                    if first_loop:
+                        self.register_image(info, subset)
+                        reg_img_log += f"\nRegistering image: {info.absolute_path}"
+                        n += info.num_repeats
+                    else:
+                        info.num_repeats += 1  # rewrite registered info
+                        reg_img_log += f"\nRegistering image: {info.absolute_path}"
+                        n += 1
+                    if n >= num_train_images:
+                        break
+                first_loop = False
+                random.shuffle(temp_reg_infos)
+            logger.info(reg_img_log)
+            self.make_buckets()
+            del temp_reg_infos
+        return
 
 
 class FineTuningDataset(BaseDataset):
@@ -1963,7 +2007,7 @@ class FineTuningDataset(BaseDataset):
         if not use_npz_latents:
             for image_info in self.image_data.values():
                 image_info.latents_npz = image_info.latents_npz_flipped = None
-
+  
     def image_key_to_npz_file(self, subset: FineTuningSubset, image_key):
         base_name = os.path.splitext(image_key)[0]
         npz_file_norm = base_name + ".npz"
@@ -2111,7 +2155,12 @@ class ControlNetDataset(BaseDataset):
         self.dreambooth_dataset_delegate.make_buckets()
         self.bucket_manager = self.dreambooth_dataset_delegate.bucket_manager
         self.buckets_indices = self.dreambooth_dataset_delegate.buckets_indices
-
+    
+    def force_reload_reg(self):
+        self.dreambooth_dataset_delegate.force_reload_reg()
+        self.bucket_manager = self.dreambooth_dataset_delegate.bucket_manager
+        self.buckets_indices = self.dreambooth_dataset_delegate.buckets_indices
+        
     def cache_latents(self, vae, vae_batch_size=1, cache_to_disk=False, is_main_process=True):
         return self.dreambooth_dataset_delegate.cache_latents(vae, vae_batch_size, cache_to_disk, is_main_process)
 
@@ -2244,6 +2293,9 @@ class DatasetGroup(torch.utils.data.ConcatDataset):
         for dataset in self.datasets:
             dataset.disable_token_padding()
 
+    def force_reload_reg(self):
+        for dataset in self.datasets:
+            dataset.force_reload_reg()
 
 def is_disk_cached_latents_is_expected(reso, npz_path: str, flip_aug: bool, alpha_mask: bool):
     expected_latents_size = (reso[1] // 8, reso[0] // 8)  # bucket_resoはWxHなので注意
@@ -3588,6 +3640,12 @@ def add_training_arguments(parser: argparse.ArgumentParser, support_dreambooth: 
         default=None,
         help="tags for model metadata, separated by comma / メタデータに書き込まれるモデルタグ、カンマ区切り",
     )
+    parser.add_argument(
+        "--force_reload_reg",
+        action="store_true",
+        help="Forces reload of regularization images. Useful if there are more regularization images than training images",
+    )
+    
 
     if support_dreambooth:
         # DreamBooth training
