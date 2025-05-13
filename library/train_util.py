@@ -1778,7 +1778,7 @@ class DreamBoothDataset(BaseDataset):
             
         logger.info(f"Forced random reload of reg images.")
         if self.num_train_images < self.num_reg_images:
-            for info in self.reg_infos:
+            for info, subset in self.reg_infos:
                 if info.image_key in self.image_data:
                     self.image_data.pop(info.image_key, None)
                     self.image_to_subset.pop(info.image_key, None)
