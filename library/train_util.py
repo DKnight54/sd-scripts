@@ -1798,7 +1798,7 @@ class DreamBoothDataset(BaseDataset):
                         info.num_repeats += 1  # rewrite registered info
                         reg_img_log += f"\nRegistering image: {info.absolute_path}"
                         n += 1
-                    if n >= num_train_images:
+                    if n >= self.num_train_images:
                         break
                 first_loop = False
                 random.shuffle(temp_reg_infos)
