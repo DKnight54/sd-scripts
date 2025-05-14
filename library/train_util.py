@@ -1767,39 +1767,36 @@ class DreamBoothDataset(BaseDataset):
         self.num_reg_images = num_reg_images
     
     def force_reload_reg(self):
-    #override to for loading random reg images if num_reg_images < num_train_images
+    #override to for loading random reg images
         if self.num_reg_images == 0:
             logger.warning("no regularization images / 正則化画像が見つかりませんでした")
             return
             
         logger.info(f"Forced random reload of reg images.")
-        if self.num_train_images < self.num_reg_images:
-            for info, subset in self.reg_infos:
+        for info, subset in self.reg_infos:
+            if info.image_key in self.image_data:
+                self.image_data.pop(info.image_key, None)
+                self.image_to_subset.pop(info.image_key, None)
+            
+        random.shuffle(self.reg_infos)
+        temp_reg_infos = copy.deepcopy(self.reg_infos)
+        n = 0
+        first_loop = True
+        reg_img_log = f"Dataset seed: {self.seed}"
+        while n < num_train_images:
+            for info, subset in temp_reg_infos:
                 if info.image_key in self.image_data:
-                    self.image_data.pop(info.image_key, None)
-                    self.image_to_subset.pop(info.image_key, None)
-                
-            random.shuffle(self.reg_infos)
-            temp_reg_infos = copy.deepcopy(self.reg_infos)
-            n = 0
-            first_loop = True
-            reg_img_log = f"Dataset seed: {self.seed}"
-            while n < num_train_images:
-                for info, subset in temp_reg_infos:
-                    if info.image_key in self.image_data:
-                        info.num_repeats += 1  # rewrite registered info
-                    else:
-                        self.register_image(info, subset)
-                    reg_img_log += f"\nRegistering image: {info.absolute_path}, count: {info.num_repeats}"
-                    n += 1
-                    if n >= num_train_images:
-                        break
-                random.shuffle(temp_reg_infos)
-            logger.info(reg_img_log)
-            self.make_buckets()
-            del temp_reg_infos
-        return
-
+                    info.num_repeats += 1  # rewrite registered info
+                else:
+                    self.register_image(info, subset)
+                reg_img_log += f"\nRegistering image: {info.absolute_path}, count: {info.num_repeats}"
+                n += 1
+                if n >= num_train_images:
+                    break
+            random.shuffle(temp_reg_infos)
+        logger.info(reg_img_log)
+        self.make_buckets()
+        del temp_reg_infos
 
 class FineTuningDataset(BaseDataset):
     def __init__(
