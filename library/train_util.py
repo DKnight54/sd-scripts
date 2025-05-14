@@ -1568,7 +1568,6 @@ class DreamBoothDataset(BaseDataset):
         self.prior_loss_weight = prior_loss_weight
         self.latents_cache = None
         self.reg_infos: List[Tuple[ImageInfo, DreamBoothSubset]] = []
-        self.train_infos: List[Tuple[ImageInfo, DreamBoothSubset]] = []
 
         self.enable_bucket = enable_bucket
         if self.enable_bucket:
@@ -1727,9 +1726,11 @@ class DreamBoothDataset(BaseDataset):
                 if size is not None:
                     info.image_size = size
                 if subset.is_reg:
-                    self.reg_infos.append((info, subset))
+                    if subset.num_repeats > 1:
+                        info.num_repeats = 1
+                    for i in range(subset.num_repeats)
+                        self.reg_infos.append((info, subset))
                 else:
-                    self.train_infos.append((info, subset))
                     self.register_image(info, subset)
 
             subset.img_count = len(img_paths)
@@ -1749,25 +1750,20 @@ class DreamBoothDataset(BaseDataset):
             # num_repeatsを計算する：どうせ大した数ではないのでループで処理する
             temp_reg_infos = copy.deepcopy(self.reg_infos)
             n = 0
-            first_loop = True
             reg_img_log = f"Dataset seed: {self.seed}"
             while n < num_train_images:
                 for info, subset in temp_reg_infos:
-                    if first_loop:
-                        self.register_image(info, subset)
-                        reg_img_log += f"\nRegistering image: {info.absolute_path}"
-                        n += info.num_repeats
-                    else:
+                    if info.image_key in self.image_data:
                         info.num_repeats += 1  # rewrite registered info
-                        reg_img_log += f"\nRegistering image: {info.absolute_path}"
-                        n += 1
+                    else:
+                        self.register_image(info, subset)
+                    reg_img_log += f"\nRegistering image: {info.absolute_path}, count: {info.num_repeats}"
+                    n += 1
                     if n >= num_train_images:
                         break
-                first_loop = False
                 random.shuffle(temp_reg_infos)
             logger.info(reg_img_log)
             del temp_reg_infos
-
         self.num_reg_images = num_reg_images
     
     def force_reload_reg(self):
@@ -1788,19 +1784,16 @@ class DreamBoothDataset(BaseDataset):
             n = 0
             first_loop = True
             reg_img_log = f"Dataset seed: {self.seed}"
-            while n < self.num_train_images:
+            while n < num_train_images:
                 for info, subset in temp_reg_infos:
-                    if first_loop:
-                        self.register_image(info, subset)
-                        reg_img_log += f"\nRegistering image: {info.absolute_path}"
-                        n += info.num_repeats
-                    else:
+                    if info.image_key in self.image_data:
                         info.num_repeats += 1  # rewrite registered info
-                        reg_img_log += f"\nRegistering image: {info.absolute_path}"
-                        n += 1
-                    if n >= self.num_train_images:
+                    else:
+                        self.register_image(info, subset)
+                    reg_img_log += f"\nRegistering image: {info.absolute_path}, count: {info.num_repeats}"
+                    n += 1
+                    if n >= num_train_images:
                         break
-                first_loop = False
                 random.shuffle(temp_reg_infos)
             logger.info(reg_img_log)
             self.make_buckets()
