@@ -687,8 +687,7 @@ class BaseDataset(torch.utils.data.Dataset):
         self.seed = seed
         
     def force_reload_reg(self):
-        #does nothing unless overridden in 
-        return
+        self.make_buckets()
         
     def set_caching_mode(self, mode):
         self.caching_mode = mode
