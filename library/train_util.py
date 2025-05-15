@@ -1740,6 +1740,7 @@ class DreamBoothDataset(BaseDataset):
         self.num_train_images = num_train_images
 
         logger.info(f"{num_reg_images} reg images.")
+        '''
         if num_train_images < num_reg_images:
             random.shuffle(self.reg_infos)
             logger.warning("some of reg images are not used / 正則化画像の数が多いので、一部使用されない正則化画像があります")
@@ -1764,8 +1765,9 @@ class DreamBoothDataset(BaseDataset):
                 random.shuffle(temp_reg_infos)
             logger.info(reg_img_log)
             del temp_reg_infos
+        '''
         self.num_reg_images = num_reg_images
-        self.subset_loaded_count()
+        #self.subset_loaded_count()
 
     def subset_loaded_count(self):
         count_str = ""
@@ -1784,7 +1786,8 @@ class DreamBoothDataset(BaseDataset):
         if self.num_reg_images == 0:
             logger.warning("no regularization images / 正則化画像が見つかりませんでした")
             return
-            
+        if self.num_train_images < self.num_reg_images:
+            logger.warning("some of reg images are not used / 正則化画像の数が多いので、一部使用されない正則化画像があります")    
         logger.info(f"Forced random reload of reg images.")
         for info, subset in self.reg_infos:
             if info.image_key in self.image_data:
