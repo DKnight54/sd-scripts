@@ -1077,6 +1077,7 @@ class NetworkTrainer:
                 accelerator.log(logs, step=epoch + 1)
 
             accelerator.wait_for_everyone()
+            progress_bar.close()
 
             # 指定エポックごとにモデルを保存
             if args.save_every_n_epochs is not None:
