@@ -1771,7 +1771,7 @@ class DreamBoothDataset(BaseDataset):
         count_str = ""
         for index, subset in enumerate(self.subsets):
             counter = 0
-            count_str += f"\nSubset {index} (Class: {index.class_tokens}): " if isinstance(index, DreamBoothSubset) and index.class_tokens is not None else f"Subset {index}: "
+            count_str += f"\nSubset {index} (Class: {subset.class_tokens}): " if isinstance(subset, DreamBoothSubset) and subset.class_tokens is not None else f"\nSubset {index}: "
             img_keys = [key for key, value in self.image_to_subset.items() if value == subset]
             for img_key in img_keys:
                 counter += self.image_data[img_key].num_repeats
