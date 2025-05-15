@@ -802,10 +802,6 @@ class NetworkTrainer:
                 args.max_train_steps > initial_step
             ), f"max_train_steps should be greater than initial step / max_train_stepsは初期ステップより大きい必要があります: {args.max_train_steps} vs {initial_step}"
 
-        progress_bar = tqdm(
-            range(args.max_train_steps - initial_step), smoothing=0, disable=not accelerator.is_local_main_process, desc="steps"
-        )
-
         epoch_to_start = 0
         if initial_step > 0:
             if args.skip_until_initial_step:
@@ -883,11 +879,17 @@ class NetworkTrainer:
 
         # training loop
         if initial_step > 0:  # only if skip_until_initial_step is specified
+            global_step = initial_step
             for skip_epoch in range(epoch_to_start):  # skip epochs
                 logger.info(f"skipping epoch {skip_epoch+1} because initial_step (multiplied) is {initial_step}")
                 initial_step -= len(train_dataloader)
-            global_step = initial_step
-
+            train_dataloader.set_epoch(epoch_to_start)
+            if initial_step > 0: #skip past remaining steps
+                skipped_dataloader = accelerator.skip_first_batches(train_dataloader, initial_step)
+                logger.info(f"skipping {initial_step} steps")
+                initial_step = 0
+            train_dataloader = skipped_dataloader
+        
         for epoch in range(epoch_to_start, num_train_epochs):
             accelerator.print(f"\nepoch {epoch+1}/{num_train_epochs}")
             current_epoch.value = epoch + 1
@@ -895,18 +897,9 @@ class NetworkTrainer:
             metadata["ss_epoch"] = str(epoch + 1)
 
             accelerator.unwrap_model(network).on_epoch_start(text_encoder, unet)
-
-            skipped_dataloader = None
-            if initial_step > 0:
-                skipped_dataloader = accelerator.skip_first_batches(train_dataloader, initial_step - 1)
-                logger.info(f"skipping {initial_step - 1} steps")
-                initial_step = 1
-
-            for step, batch in enumerate(skipped_dataloader or train_dataloader):
+            progress_bar = tqdm(range(len(train_dataloader)), smoothing=0, disable=not accelerator.is_local_main_process, desc="steps")
+            for step, batch in enumerate(train_dataloader):
                 current_step.value = global_step
-                if initial_step > 0:
-                    initial_step -= 1
-                    continue
 
                 with accelerator.accumulate(training_model):
                     on_step_start(text_encoder, unet)
@@ -1059,7 +1052,7 @@ class NetworkTrainer:
                 current_loss = loss.detach().item()
                 loss_recorder.add(epoch=epoch, step=step, loss=current_loss)
                 avr_loss: float = loss_recorder.moving_average
-                logs = {"avr_loss": avr_loss}  # , "lr": lr_scheduler.get_last_lr()[0]}
+                logs = {"avr_loss": avr_loss, "Global Steps" : global_step}  # , "lr": lr_scheduler.get_last_lr()[0]}
                 progress_bar.set_postfix(**logs)
 
                 if args.scale_weight_norms:
