@@ -893,7 +893,7 @@ class NetworkTrainer:
                 skipped_dataloader = accelerator.skip_first_batches(train_dataloader, initial_step)
                 logger.info(f"skipping {initial_step} steps")
                 initial_step = 0
-            train_dataloader = skipped_dataloader
+                train_dataloader = skipped_dataloader
         
         for epoch in range(epoch_to_start, num_train_epochs):
             accelerator.print(f"\nepoch {epoch+1}/{num_train_epochs}")
