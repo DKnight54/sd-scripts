@@ -899,6 +899,7 @@ class NetworkTrainer:
             skipped_dataloader = None
             if initial_step > 0:
                 skipped_dataloader = accelerator.skip_first_batches(train_dataloader, initial_step - 1)
+                logger.info(f"skipping skipping {initial_step - 1} steps")
                 initial_step = 1
 
             for step, batch in enumerate(skipped_dataloader or train_dataloader):
