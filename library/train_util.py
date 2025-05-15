@@ -1776,7 +1776,7 @@ class DreamBoothDataset(BaseDataset):
             for img_key in img_keys:
                 counter += self.image_data[img_key].num_repeats
             count_str += f"{counter}/{subset.img_count * subset.num_repeats}"
-            count_str += f"\nSubset dir: {subset.image_dir}" if subset.image_dir is not None
+            count_str += f"\nSubset dir: {subset.image_dir}" if subset.image_dir is not None else ""
         logger.info(count_str)
     
     def force_reload_reg(self):
