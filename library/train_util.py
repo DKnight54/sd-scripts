@@ -1728,7 +1728,7 @@ class DreamBoothDataset(BaseDataset):
                 if subset.is_reg:
                     if subset.num_repeats > 1:
                         info.num_repeats = 1
-                    for i in range(subset.num_repeats)
+                    for i in range(subset.num_repeats):
                         self.reg_infos.append((info, subset))
                 else:
                     self.register_image(info, subset)
