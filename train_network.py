@@ -513,6 +513,7 @@ class NetworkTrainer:
                 json.dump({"current_epoch": current_epoch.value, "current_step": current_step.value + 1}, f)
 
         steps_from_state = None
+        epoch_from_state = None
 
         def load_model_hook(models, input_dir):
             # remove models except network
@@ -525,12 +526,13 @@ class NetworkTrainer:
             # print(f"load model hook: {len(models)} models will be loaded")
 
             # load current epoch and step to
-            nonlocal steps_from_state
+            nonlocal steps_from_state, epoch_from_state
             train_state_file = os.path.join(input_dir, "train_state.json")
             if os.path.exists(train_state_file):
                 with open(train_state_file, "r", encoding="utf-8") as f:
                     data = json.load(f)
                 steps_from_state = data["current_step"]
+                epoch_from_state = data["current_epoch"]
                 logger.info(f"load train state from {train_state_file}: {data}")
 
         accelerator.register_save_state_pre_hook(save_model_hook)
@@ -803,24 +805,28 @@ class NetworkTrainer:
             ), f"max_train_steps should be greater than initial step / max_train_stepsは初期ステップより大きい必要があります: {args.max_train_steps} vs {initial_step}"
 
         epoch_to_start = 0
+        global_step = 0
         if initial_step > 0:
             if args.skip_until_initial_step:
+                global_step = initial_step # Moved global steps here to prevent gradient accumulation steps from confusing results.
                 # if skip_until_initial_step is specified, load data and discard it to ensure the same data is used
                 if not args.resume:
                     logger.info(
                         f"initial_step is specified but not resuming. lr scheduler will be started from the beginning / initial_stepが指定されていますがresumeしていないため、lr schedulerは最初から始まります"
                     )
-                logger.info(f"skipping {initial_step} steps / {initial_step}ステップをスキップします")
-                initial_step *= args.gradient_accumulation_steps
+                if args.resume_from_epoch and epoch_from_state is not None:
+                    epoch_to_start = epoch_from_state
+                    initial_step = 0 #Skips only epochs
+                else:
+                    logger.info(f"skipping {initial_step} steps / {initial_step}ステップをスキップします")
+                    initial_step *= args.gradient_accumulation_steps
 
-                # set epoch to start to make initial_step less than len(train_dataloader)
-                epoch_to_start = initial_step // math.ceil(len(train_dataloader) / args.gradient_accumulation_steps)
+                    # set epoch to start to make initial_step less than len(train_dataloader)
+                    epoch_to_start = initial_step // math.ceil(len(train_dataloader) / args.gradient_accumulation_steps)
             else:
                 # if not, only epoch no is skipped for informative purpose
                 epoch_to_start = initial_step // math.ceil(len(train_dataloader) / args.gradient_accumulation_steps)
                 initial_step = 0  # do not skip
-
-        global_step = 0
 
         noise_scheduler = DDPMScheduler(
             beta_start=0.00085, beta_end=0.012, beta_schedule="scaled_linear", num_train_timesteps=1000, clip_sample=False
@@ -879,7 +885,6 @@ class NetworkTrainer:
 
         # training loop
         if initial_step > 0:  # only if skip_until_initial_step is specified
-            global_step = initial_step
             for skip_epoch in range(epoch_to_start):  # skip epochs
                 logger.info(f"skipping epoch {skip_epoch+1} because initial_step (multiplied) is {initial_step}")
                 initial_step -= len(train_dataloader)
@@ -897,7 +902,7 @@ class NetworkTrainer:
             metadata["ss_epoch"] = str(epoch + 1)
 
             accelerator.unwrap_model(network).on_epoch_start(text_encoder, unet)
-            progress_bar = tqdm(range(len(train_dataloader)), smoothing=0, disable=not accelerator.is_local_main_process, desc="steps")
+            progress_bar = tqdm(range(math.ceil(len(train_dataloader) / accelerator.num_processes / args.gradient_accumulation_steps)), smoothing=0, disable=not accelerator.is_local_main_process, desc="steps")
             for step, batch in enumerate(train_dataloader):
                 current_step.value = global_step
 
@@ -1219,6 +1224,11 @@ def setup_parser() -> argparse.ArgumentParser:
         "--skip_until_initial_step",
         action="store_true",
         help="skip training until initial_step is reached / initial_stepに到達するまで学習をスキップする",
+    )
+    parser.add_argument(
+        "--resume_from_epoch",
+        action="store_true",
+        help="Sets initial epoch to last epoch from state, does not skip initial steps",
     )
     parser.add_argument(
         "--initial_epoch",
