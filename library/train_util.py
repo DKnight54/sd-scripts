@@ -1769,7 +1769,7 @@ class DreamBoothDataset(BaseDataset):
 
     def subset_loaded_count(self):
         count_str = ""
-        for index, subset in enumarate(self.subsets):
+        for index, subset in enumerate(self.subsets):
             counter = 0
             count_str += f"\nSubset {index} (Class: {index.class_tokens}): " if isinstance(index, DreamBoothSubset) and index.class_tokens is not None else f"Subset {index}: "
             img_keys = [key for key, value in self.image_to_subset.items() if value == subset]
