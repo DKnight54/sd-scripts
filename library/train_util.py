@@ -1750,7 +1750,7 @@ class DreamBoothDataset(BaseDataset):
             # num_repeatsを計算する：どうせ大した数ではないのでループで処理する
             temp_reg_infos = copy.deepcopy(self.reg_infos)
             n = 0
-            reg_img_log = f"Dataset seed: {self.seed}"
+            reg_img_log = f"\nDataset seed: {self.seed}"
             while n < num_train_images:
                 for info, subset in temp_reg_infos:
                     if info.image_key in self.image_data:
@@ -1765,6 +1765,19 @@ class DreamBoothDataset(BaseDataset):
             logger.info(reg_img_log)
             del temp_reg_infos
         self.num_reg_images = num_reg_images
+        self.subset_loaded_count()
+
+    def subset_loaded_count(self):
+        count_str = ""
+        for index, subset in enumarate(self.subsets):
+            counter = 0
+            count_str += f"\nSubset {index} (Class: {index.class_tokens}): " if isinstance(index, DreamBoothSubset) and index.class_tokens is not None else f"Subset {index}: "
+            img_keys = [key for key, value in self.image_to_subset.items() if value == subset]
+            for img_key in img_keys:
+                counter += self.image_data[img_key].num_repeats
+            count_str += f"{counter}/{subset.img_count * subset.num_repeats}"
+            count_str += f"\nSubset dir: {subset.image_dir}" if subset.image_dir is not None
+        logger.info(count_str)
     
     def force_reload_reg(self):
     #override to for loading random reg images
@@ -1797,6 +1810,7 @@ class DreamBoothDataset(BaseDataset):
         logger.info(reg_img_log)
         self.make_buckets()
         del temp_reg_infos
+        self.subset_loaded_count()
 
 class FineTuningDataset(BaseDataset):
     def __init__(
