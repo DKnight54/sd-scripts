@@ -1796,7 +1796,7 @@ class DreamBoothDataset(BaseDataset):
         n = 0
         first_loop = True
         reg_img_log = f"Dataset seed: {self.seed}"
-        while n < num_train_images:
+        while n < self.num_train_images :
             for info, subset in temp_reg_infos:
                 if info.image_key in self.image_data:
                     info.num_repeats += 1  # rewrite registered info
@@ -1804,7 +1804,7 @@ class DreamBoothDataset(BaseDataset):
                     self.register_image(info, subset)
                 reg_img_log += f"\nRegistering image: {info.absolute_path}, count: {info.num_repeats}"
                 n += 1
-                if n >= num_train_images:
+                if n >= self.num_train_images :
                     break
             random.shuffle(temp_reg_infos)
         logger.info(reg_img_log)
