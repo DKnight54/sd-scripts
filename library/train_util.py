@@ -1779,7 +1779,7 @@ class DreamBoothDataset(BaseDataset):
         self.incremental_reg_load()
 
     def incremental_reg_load(self):
-         if self.num_reg_images == 0:
+        if self.num_reg_images == 0:
                 logger.warning("no regularization images / 正則化画像が見つかりませんでした")
                 return
         if self.num_train_images < self.num_reg_images:
@@ -1793,6 +1793,7 @@ class DreamBoothDataset(BaseDataset):
         temp_reg_infos = copy.deepcopy(self.reg_infos) # Deepcopy list of regularization images to maintain original repeats
         first_loop = True # Flag to check if all available reg images have been loaded once.
         start_index = self.reg_infos_index
+        reg_img_log = f"\nDataset seed: {self.seed}"
         while n < self.num_train_images:
             info, subset = temp_reg_infos[self.reg_infos_index]
             if first_loop:
@@ -1806,8 +1807,9 @@ class DreamBoothDataset(BaseDataset):
                 self.reg_infos_index = 0
             if first_loop and self.reg_infos_index == start_index:
                 first_loop = False
-
-        del temp_reg_infos
+            reg_img_log += f"\nRegistering image: {info.absolute_path}, count: {info.num_repeats}"
+    logger.info(reg_img_log)    
+    del temp_reg_infos
 
 class FineTuningDataset(BaseDataset):
     def __init__(
