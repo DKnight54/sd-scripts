@@ -689,9 +689,9 @@ class BaseDataset(torch.utils.data.Dataset):
     def set_seed(self, seed):
         self.seed = seed
         
-    def set_reload_reg(self, reload_reg):
-        self.reload_red = reload_reg
-        
+    def set_reg_reload(self, reload_reg):
+        self.reload_reg = reload_reg
+
     def incremental_reg_load(self):
         return
         
@@ -2285,6 +2285,10 @@ class DatasetGroup(torch.utils.data.ConcatDataset):
     def set_caching_mode(self, caching_mode):
         for dataset in self.datasets:
             dataset.set_caching_mode(caching_mode)
+
+    def set_reg_reload(self, reg_reload):
+        for dataset in self.datasets:
+            dataset.set_reg_reload(reg_reload)
 
     def verify_bucket_reso_steps(self, min_steps: int):
         for dataset in self.datasets:
