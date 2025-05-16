@@ -693,7 +693,7 @@ class BaseDataset(torch.utils.data.Dataset):
         self.reload_red = reload_reg
         
     def incremental_reg_load(self):
-        self.make_buckets()
+        return
         
     def set_caching_mode(self, mode):
         self.caching_mode = mode
@@ -705,6 +705,9 @@ class BaseDataset(torch.utils.data.Dataset):
                 num_epochs = epoch - self.current_epoch
                 for _ in range(num_epochs):
                     self.current_epoch += 1
+                    if self.reload_reg:
+                        self.incremental_reg_load()
+                        self.make_buckets()
                     self.shuffle_buckets()
                 # self.current_epoch seem to be set to 0 again in the next epoch. it may be caused by skipped_dataloader?
             else:
@@ -1807,7 +1810,7 @@ class DreamBoothDataset(BaseDataset):
         temp_reg_infos = copy.deepcopy(self.reg_infos)
         n = 0
         first_loop = True
-        reg_img_log = f"Dataset seed: {self.seed}"
+        reg_img_log = f"\nDataset seed: {self.seed}"
         while n < self.num_train_images :
             for info, subset in temp_reg_infos:
                 if info.image_key in self.image_data:
@@ -1816,7 +1819,7 @@ class DreamBoothDataset(BaseDataset):
                     self.register_image(info, subset)
                 reg_img_log += f"\nRegistering image: {info.absolute_path}, count: {info.num_repeats}"
                 n += 1
-                if n >= self.num_train_images :
+                if n >= self.num_train_images:
                     break
             random.shuffle(temp_reg_infos)
         logger.info(reg_img_log)
