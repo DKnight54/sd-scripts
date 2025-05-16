@@ -2246,7 +2246,7 @@ class DatasetGroup(torch.utils.data.ConcatDataset):
         
     def set_reload_reg(self, reload_reg):
         for dataset in self.datasets:
-            dataset.set_reload_reg()
+            dataset.set_reload_reg(reload_reg)
             
     def add_replacement(self, str_from, str_to):
         for dataset in self.datasets:
