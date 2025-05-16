@@ -263,24 +263,26 @@ class NetworkTrainer:
                 module.merge_to(text_encoder, unet, weights_sd, weight_dtype, accelerator.device if args.lowram else "cpu")
 
             accelerator.print(f"all weights merged: {', '.join(args.base_weights)}")
-
+        if args.incremental_reg_reload:
+            train_dataset_group.set_reg_reload(args.incremental_reg_reload)
         # 学習を準備する
-        if cache_latents:
-            vae.to(accelerator.device, dtype=vae_dtype)
-            vae.requires_grad_(False)
-            vae.eval()
-            with torch.no_grad():
-                train_dataset_group.cache_latents(vae, args.vae_batch_size, args.cache_latents_to_disk, accelerator.is_main_process)
-            vae.to("cpu")
-            clean_memory_on_device(accelerator.device)
-
-            accelerator.wait_for_everyone()
-
-        # 必要ならテキストエンコーダーの出力をキャッシュする: Text Encoderはcpuまたはgpuへ移される
-        # cache text encoder outputs if needed: Text Encoder is moved to cpu or gpu
-        self.cache_text_encoder_outputs_if_needed(
-            args, accelerator, unet, vae, tokenizers, text_encoders, train_dataset_group, weight_dtype
-        )
+        if not args.incremental_reg_reload:
+            if cache_latents:
+                vae.to(accelerator.device, dtype=vae_dtype)
+                vae.requires_grad_(False)
+                vae.eval()
+                with torch.no_grad():
+                    train_dataset_group.cache_latents(vae, args.vae_batch_size, args.cache_latents_to_disk, accelerator.is_main_process)
+                vae.to("cpu")
+                clean_memory_on_device(accelerator.device)
+    
+                accelerator.wait_for_everyone()
+    
+            # 必要ならテキストエンコーダーの出力をキャッシュする: Text Encoderはcpuまたはgpuへ移される
+            # cache text encoder outputs if needed: Text Encoder is moved to cpu or gpu
+            self.cache_text_encoder_outputs_if_needed(
+                args, accelerator, unet, vae, tokenizers, text_encoders, train_dataset_group, weight_dtype
+            )
 
         # prepare network
         net_kwargs = {}
@@ -490,7 +492,7 @@ class NetworkTrainer:
         # 実験的機能：勾配も含めたfp16学習を行う　PyTorchにパッチを当ててfp16でのgrad scaleを有効にする
         if args.full_fp16:
             train_util.patch_accelerator_for_fp16_training(accelerator)
-
+        
         # before resuming make hook for saving/loading to save/load the network weights only
         def save_model_hook(models, weights, output_dir):
             # pop weights of other models than network to save only network weights
@@ -900,7 +902,24 @@ class NetworkTrainer:
             current_epoch.value = epoch + 1
 
             metadata["ss_epoch"] = str(epoch + 1)
+            if args.incremental_reg_reload:
+                if cache_latents:
+                    vae.to(accelerator.device, dtype=vae_dtype)
+                    vae.requires_grad_(False)
+                    vae.eval()
+                    with torch.no_grad():
+                        train_dataset_group.cache_latents(vae, args.vae_batch_size, args.cache_latents_to_disk, accelerator.is_main_process)
+                    vae.to("cpu")
+                    clean_memory_on_device(accelerator.device)
+        
+                    accelerator.wait_for_everyone()
 
+            # 必要ならテキストエンコーダーの出力をキャッシュする: Text Encoderはcpuまたはgpuへ移される
+            # cache text encoder outputs if needed: Text Encoder is moved to cpu or gpu
+                if args.cache_text_encoder_outputs:
+                    self.cache_text_encoder_outputs_if_needed(
+                        args, accelerator, unet, vae, tokenizers, text_encoders, train_dataset_group, weight_dtype
+                    )
             accelerator.unwrap_model(network).on_epoch_start(text_encoder, unet)
             progress_bar = tqdm(range(math.ceil(len(train_dataloader) / accelerator.num_processes / args.gradient_accumulation_steps)), smoothing=0, disable=not accelerator.is_local_main_process, desc="steps")
             for step, batch in enumerate(train_dataloader):
@@ -1097,25 +1116,7 @@ class NetworkTrainer:
             if args.sample_every_n_epochs is not None and (epoch + 1)% args.sample_every_n_epochs == 0:
                 example_tuple = (latents, batch["captions"])
                 self.sample_images(accelerator, args, epoch + 1, global_step, accelerator.device, vae, tokenizer, text_encoder, unet, example_tuple)
-            if args.force_reload_reg is not None and (epoch + 1) < num_train_epochs:
-                train_dataset_group.force_reload_reg()
-                if cache_latents:
-                    vae.to(accelerator.device, dtype=vae_dtype)
-                    vae.requires_grad_(False)
-                    vae.eval()
-                    with torch.no_grad():
-                        train_dataset_group.cache_latents(vae, args.vae_batch_size, args.cache_latents_to_disk, accelerator.is_main_process)
-                    vae.to("cpu")
-                    clean_memory_on_device(accelerator.device)
-        
-                    accelerator.wait_for_everyone()
 
-            # 必要ならテキストエンコーダーの出力をキャッシュする: Text Encoderはcpuまたはgpuへ移される
-            # cache text encoder outputs if needed: Text Encoder is moved to cpu or gpu
-                if args.cache_text_encoder_outputs:
-                    self.cache_text_encoder_outputs_if_needed(
-                        args, accelerator, unet, vae, tokenizers, text_encoders, train_dataset_group, weight_dtype
-                    )
             # end of epoch
 
         # metadata["ss_epoch"] = str(num_train_epochs)
