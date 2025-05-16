@@ -693,7 +693,7 @@ class BaseDataset(torch.utils.data.Dataset):
         self.reload_reg = reload_reg
 
     def incremental_reg_load(self):
-        return
+        self.make_buckets()
         
     def set_caching_mode(self, mode):
         self.caching_mode = mode
