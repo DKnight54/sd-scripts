@@ -164,6 +164,8 @@ class ImageInfo:
         self.text_encoder_outputs2: Optional[torch.Tensor] = None
         self.text_encoder_pool2: Optional[torch.Tensor] = None
         self.alpha_mask: Optional[torch.Tensor] = None  # alpha mask can be flipped in runtime
+        self.latent_cache_checked: bool = False # To check if latent cache as been checked, skipss on next round latent cache checking.
+        self.te_cache_checked: bool = False # To check if te cache as been checked, skipss on next round latent cache checking.
 
 
 class BucketManager:
@@ -639,6 +641,7 @@ class BaseDataset(torch.utils.data.Dataset):
         self.current_step: int = 0
         self.max_train_steps: int = 0
         self.seed: int = 0
+        self.reload_reg: bool = False
 
         # augmentation
         self.aug_helper = AugHelper()
@@ -684,6 +687,12 @@ class BaseDataset(torch.utils.data.Dataset):
     def set_seed(self, seed):
         self.seed = seed
 
+    def set_reload_reg(self, reload_reg):
+        self.reload_red = reload_reg
+    
+    def incremental_reg_load(self): # Placeholder method, does nothing unless overridden in subclasses.
+        return
+
     def set_caching_mode(self, mode):
         self.caching_mode = mode
 
@@ -694,6 +703,9 @@ class BaseDataset(torch.utils.data.Dataset):
                 num_epochs = epoch - self.current_epoch
                 for _ in range(num_epochs):
                     self.current_epoch += 1
+                    if self.reload_reg:
+                        self.incremental_reg_load()
+                        self.make_buckets()
                     self.shuffle_buckets()
                 # self.current_epoch seem to be set to 0 again in the next epoch. it may be caused by skipped_dataloader?
             else:
@@ -1025,6 +1037,8 @@ class BaseDataset(torch.utils.data.Dataset):
         logger.info("caching latents.")
 
         image_infos = list(self.image_data.values())
+        # Filters out previously checked latents
+        image_infos = list(filter(lambda info: info.latent_cache_checked == False, image_infos))
 
         # sort by resolution
         image_infos.sort(key=lambda info: info.bucket_reso[0] * info.bucket_reso[1])
@@ -1051,6 +1065,7 @@ class BaseDataset(torch.utils.data.Dataset):
 
         logger.info("checking cache validity...")
         for info in tqdm(image_infos):
+            info.latent_cache_checked = True # Marks latent as checked for future loads.
             subset = self.image_to_subset[info.image_key]
 
             if info.latents_npz is not None:  # fine tuning dataset
@@ -1107,11 +1122,14 @@ class BaseDataset(torch.utils.data.Dataset):
         # またマルチGPUには対応していないので、そちらはtools/cache_latents.pyを使うこと
         logger.info("caching text encoder outputs.")
         image_infos = list(self.image_data.values())
+        # Filters out previously checked TE cache
+        image_infos = list(filter(lambda info: info.te_cache_checked == False, image_infos))
 
         logger.info("checking cache existence...")
         image_infos_to_cache = []
         for info in tqdm(image_infos):
             # subset = self.image_to_subset[info.image_key]
+            info.te_cache_checked = True # Marked te cache as checked.
             if cache_to_disk:
                 te_out_npz = os.path.splitext(info.absolute_path)[0] + TEXT_ENCODER_OUTPUTS_CACHE_SUFFIX
                 info.text_encoder_outputs_npz = te_out_npz
@@ -1561,6 +1579,8 @@ class DreamBoothDataset(BaseDataset):
         self.size = min(self.width, self.height)  # 短いほう
         self.prior_loss_weight = prior_loss_weight
         self.latents_cache = None
+        self.reg_infos: List[Tuple[ImageInfo, DreamBoothSubset]] = [] # List of regularization images + subsets to iterate through when loading
+        self.reg_infos_index = 0 # Stored index of reg_infos
 
         self.enable_bucket = enable_bucket
         if self.enable_bucket:
@@ -1731,6 +1751,9 @@ class DreamBoothDataset(BaseDataset):
         self.num_train_images = num_train_images
 
         logger.info(f"{num_reg_images} reg images.")
+        '''
+        Code removed with regularization image loading logic in overridden method incremental_reg_load()
+        
         if num_train_images < num_reg_images:
             logger.warning("some of reg images are not used / 正則化画像の数が多いので、一部使用されない正則化画像があります")
 
@@ -1751,9 +1774,40 @@ class DreamBoothDataset(BaseDataset):
                     if n >= num_train_images:
                         break
                 first_loop = False
-
+        '''
         self.num_reg_images = num_reg_images
+        self.incremental_reg_load()
 
+    def incremental_reg_load(self):
+         if self.num_reg_images == 0:
+                logger.warning("no regularization images / 正則化画像が見つかりませんでした")
+                return
+        if self.num_train_images < self.num_reg_images:
+            logger.warning("some of reg images are not used / 正則化画像の数が多いので、一部使用されない正則化画像があります")
+
+        # Clearing previously loaded reg images from buckets
+        for info, subset in self.reg_infos:
+            if info.image_key in self.image_data:
+                self.image_data.pop(info.image_key, None)
+                self.image_to_subset.pop(info.image_key, None)
+        temp_reg_infos = copy.deepcopy(self.reg_infos) # Deepcopy list of regularization images to maintain original repeats
+        first_loop = True # Flag to check if all available reg images have been loaded once.
+        start_index = self.reg_infos_index
+        while n < self.num_train_images:
+            info, subset = temp_reg_infos[self.reg_infos_index]
+            if first_loop:
+                self.register_image(info, subset)
+                n += info.num_repeats
+            else:
+                info.num_repeats += 1  # rewrite registered info
+                n += 1
+            self.reg_infos_index += 1
+            if self.reg_infos_index % len(temp_reg_infos) == 0:
+                self.reg_infos_index = 0
+            if first_loop and self.reg_infos_index == start_index:
+                first_loop = False
+
+        del temp_reg_infos
 
 class FineTuningDataset(BaseDataset):
     def __init__(
@@ -2098,6 +2152,9 @@ class ControlNetDataset(BaseDataset):
 
         self.conditioning_image_transforms = IMAGE_TRANSFORMS
 
+    def incremental_reg_load(self):
+        self.dreambooth_dataset_delegate.incremental_reg_load()
+        
     def make_buckets(self):
         self.dreambooth_dataset_delegate.make_buckets()
         self.bucket_manager = self.dreambooth_dataset_delegate.bucket_manager
@@ -2181,13 +2238,22 @@ class DatasetGroup(torch.utils.data.ConcatDataset):
             self.num_train_images += dataset.num_train_images
             self.num_reg_images += dataset.num_reg_images
 
+    def incremental_reg_load(self):
+        for dataset in self.datasets:
+            dataset.incremental_reg_load()
+        
+    def set_reload_reg(self, reload_reg):
+        self.reload_red = reload_reg
+        for dataset in self.datasets:
+            dataset.set_reload_reg()
+            
     def add_replacement(self, str_from, str_to):
         for dataset in self.datasets:
             dataset.add_replacement(str_from, str_to)
 
-    # def make_buckets(self):
-    #   for dataset in self.datasets:
-    #     dataset.make_buckets()
+    def make_buckets(self):
+        for dataset in self.datasets:
+            dataset.make_buckets()
 
     def enable_XTI(self, *args, **kwargs):
         for dataset in self.datasets:
