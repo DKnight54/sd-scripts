@@ -688,7 +688,7 @@ class BaseDataset(torch.utils.data.Dataset):
         self.seed = seed
 
     def set_reload_reg(self, reload_reg):
-        self.reload_red = reload_reg
+        self.reload_reg = reload_reg
     
     def incremental_reg_load(self): # Placeholder method, does nothing unless overridden in subclasses.
         return
@@ -2245,7 +2245,6 @@ class DatasetGroup(torch.utils.data.ConcatDataset):
             dataset.incremental_reg_load()
         
     def set_reload_reg(self, reload_reg):
-        self.reload_red = reload_reg
         for dataset in self.datasets:
             dataset.set_reload_reg()
             
