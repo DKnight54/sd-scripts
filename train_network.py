@@ -890,7 +890,7 @@ class NetworkTrainer:
             for skip_epoch in range(epoch_to_start):  # skip epochs
                 logger.info(f"skipping epoch {skip_epoch+1} because initial_step (multiplied) is {initial_step}")
                 initial_step -= len(train_dataloader)
-            train_dataloader.set_epoch(epoch_to_start)
+            # train_dataloader.set_epoch(epoch_to_start)
             if initial_step > 0: #skip past remaining steps
                 skipped_dataloader = accelerator.skip_first_batches(train_dataloader, initial_step)
                 logger.info(f"skipping {initial_step} steps")
@@ -903,6 +903,7 @@ class NetworkTrainer:
 
             metadata["ss_epoch"] = str(epoch + 1)
             if args.incremental_reg_reload:
+                
                 if cache_latents:
                     vae.to(accelerator.device, dtype=vae_dtype)
                     vae.requires_grad_(False)
