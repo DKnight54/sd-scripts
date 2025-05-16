@@ -1239,7 +1239,7 @@ def setup_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--incremental_reg_reload",
         action="store_true",
-        help="skip training until initial_step is reached / initial_stepに到達するまで学習をスキップする",
+        help="Will incrementally load regularizing images on each epoch",
     )
     parser.add_argument(
         "--initial_epoch",
