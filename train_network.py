@@ -264,7 +264,7 @@ class NetworkTrainer:
             accelerator.print(f"all weights merged: {', '.join(args.base_weights)}")
 
         # 学習を準備する
-        if cache_latents:
+        if cache_latents and not args.incremental_reg_reload: # Skip caching here if incremental reg reload as will be caching at start of epoch
             vae.to(accelerator.device, dtype=vae_dtype)
             vae.requires_grad_(False)
             vae.eval()
@@ -277,9 +277,10 @@ class NetworkTrainer:
 
         # 必要ならテキストエンコーダーの出力をキャッシュする: Text Encoderはcpuまたはgpuへ移される
         # cache text encoder outputs if needed: Text Encoder is moved to cpu or gpu
-        self.cache_text_encoder_outputs_if_needed(
-            args, accelerator, unet, vae, tokenizers, text_encoders, train_dataset_group, weight_dtype
-        )
+        if not args.incremental_reg_reload:
+            self.cache_text_encoder_outputs_if_needed(
+                args, accelerator, unet, vae, tokenizers, text_encoders, train_dataset_group, weight_dtype
+            )
 
         # prepare network
         net_kwargs = {}
@@ -480,7 +481,8 @@ class NetworkTrainer:
         del t_enc
 
         accelerator.unwrap_model(network).prepare_grad_etc(text_encoder, unet)
-
+        if args.incremental_reg_reload:
+            train_dataset_group.set_reg_reload(args.incremental_reg_reload)
         if not cache_latents:  # キャッシュしない場合はVAEを使うのでVAEを準備する
             vae.requires_grad_(False)
             vae.eval()
@@ -845,7 +847,6 @@ class NetworkTrainer:
             )
 
         loss_recorder = train_util.LossRecorder()
-        del train_dataset_group
 
         # callback for step start
         if hasattr(accelerator.unwrap_model(network), "on_step_start"):
@@ -890,7 +891,23 @@ class NetworkTrainer:
         for epoch in range(epoch_to_start, num_train_epochs):
             accelerator.print(f"\nepoch {epoch+1}/{num_train_epochs}")
             current_epoch.value = epoch + 1
+            if cache_latents and args.incremental_reg_reload: # Skip caching here if incremental reg reload as will be caching at start of epoch
+                vae.to(accelerator.device, dtype=vae_dtype)
+                vae.requires_grad_(False)
+                vae.eval()
+                with torch.no_grad():
+                    train_dataset_group.cache_latents(vae, args.vae_batch_size, args.cache_latents_to_disk, accelerator.is_main_process)
+                vae.to("cpu")
+                clean_memory_on_device(accelerator.device)
+    
+                accelerator.wait_for_everyone()
 
+            # 必要ならテキストエンコーダーの出力をキャッシュする: Text Encoderはcpuまたはgpuへ移される
+            # cache text encoder outputs if needed: Text Encoder is moved to cpu or gpu
+            if args.incremental_reg_reload:
+                self.cache_text_encoder_outputs_if_needed(
+                    args, accelerator, unet, vae, tokenizers, text_encoders, train_dataset_group, weight_dtype
+                )
             metadata["ss_epoch"] = str(epoch + 1)
 
             accelerator.unwrap_model(network).on_epoch_start(text_encoder, unet)
@@ -1216,6 +1233,11 @@ def setup_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--skip_until_initial_step",
+        action="store_true",
+        help="skip training until initial_step is reached / initial_stepに到達するまで学習をスキップする",
+    )
+    parser.add_argument(
+        "--incremental_reg_reload",
         action="store_true",
         help="skip training until initial_step is reached / initial_stepに到達するまで学習をスキップする",
     )
