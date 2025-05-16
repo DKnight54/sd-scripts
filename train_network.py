@@ -483,7 +483,7 @@ class NetworkTrainer:
 
         accelerator.unwrap_model(network).prepare_grad_etc(text_encoder, unet)
         if args.incremental_reg_reload:
-            train_dataset_group.set_reg_reload(args.incremental_reg_reload)
+            train_dataset_group.set_reload_reg(args.incremental_reg_reload)
         if not cache_latents:  # キャッシュしない場合はVAEを使うのでVAEを準備する
             vae.requires_grad_(False)
             vae.eval()
