@@ -577,8 +577,8 @@ def generate_dataset_group_by_blueprint(dataset_group_blueprint: DatasetGroupBlu
     for i, dataset in enumerate(datasets):
         logger.info(f"[Dataset {i}]")
         dataset.set_seed(seed)
-        dataset.force_reload_reg()
-        
+        dataset.incremental_reg_reload()
+        dataset.make_buckets()
 
     return DatasetGroup(datasets)
 
