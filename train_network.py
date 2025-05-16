@@ -1099,6 +1099,23 @@ class NetworkTrainer:
                 self.sample_images(accelerator, args, epoch + 1, global_step, accelerator.device, vae, tokenizer, text_encoder, unet, example_tuple)
             if args.force_reload_reg is not None and (epoch + 1) < num_train_epochs:
                 train_dataset_group.force_reload_reg()
+                if cache_latents:
+                    vae.to(accelerator.device, dtype=vae_dtype)
+                    vae.requires_grad_(False)
+                    vae.eval()
+                    with torch.no_grad():
+                        train_dataset_group.cache_latents(vae, args.vae_batch_size, args.cache_latents_to_disk, accelerator.is_main_process)
+                    vae.to("cpu")
+                    clean_memory_on_device(accelerator.device)
+        
+                    accelerator.wait_for_everyone()
+
+            # 必要ならテキストエンコーダーの出力をキャッシュする: Text Encoderはcpuまたはgpuへ移される
+            # cache text encoder outputs if needed: Text Encoder is moved to cpu or gpu
+                if args.cache_text_encoder_outputs:
+                    self.cache_text_encoder_outputs_if_needed(
+                        args, accelerator, unet, vae, tokenizers, text_encoders, train_dataset_group, weight_dtype
+                    )
             # end of epoch
 
         # metadata["ss_epoch"] = str(num_train_epochs)
