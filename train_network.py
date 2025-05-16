@@ -267,8 +267,8 @@ class NetworkTrainer:
             train_dataset_group.set_reg_reload(args.incremental_reg_reload)
         # 学習を準備する
         if not args.incremental_reg_reload:
-            train_dataset_group.dataset.incremental_reg_load()
-            train_dataset_group.dataset.make_buckets()
+            train_dataset_group.incremental_reg_load()
+            train_dataset_group.make_buckets()
             if cache_latents:
                 vae.to(accelerator.device, dtype=vae_dtype)
                 vae.requires_grad_(False)
@@ -905,8 +905,8 @@ class NetworkTrainer:
 
             metadata["ss_epoch"] = str(epoch + 1)
             if args.incremental_reg_reload:
-                train_dataset_group.dataset.incremental_reg_load()
-                train_dataset_group.dataset.make_buckets()
+                train_dataset_group.incremental_reg_load()
+                train_dataset_group.make_buckets()
                 if cache_latents:
                     vae.to(accelerator.device, dtype=vae_dtype)
                     vae.requires_grad_(False)
