@@ -904,26 +904,7 @@ class NetworkTrainer:
             current_epoch.value = epoch + 1
 
             metadata["ss_epoch"] = str(epoch + 1)
-            if args.incremental_reg_reload:
-                train_dataset_group.incremental_reg_load()
-                # train_dataset_group.make_buckets()
-                if cache_latents:
-                    vae.to(accelerator.device, dtype=vae_dtype)
-                    vae.requires_grad_(False)
-                    vae.eval()
-                    with torch.no_grad():
-                        train_dataset_group.cache_latents(vae, args.vae_batch_size, args.cache_latents_to_disk, accelerator.is_main_process)
-                    vae.to("cpu")
-                    clean_memory_on_device(accelerator.device)
-        
-                    accelerator.wait_for_everyone()
 
-            # 必要ならテキストエンコーダーの出力をキャッシュする: Text Encoderはcpuまたはgpuへ移される
-            # cache text encoder outputs if needed: Text Encoder is moved to cpu or gpu
-                if args.cache_text_encoder_outputs:
-                    self.cache_text_encoder_outputs_if_needed(
-                        args, accelerator, unet, vae, tokenizers, text_encoders, train_dataset_group, weight_dtype
-                    )
             accelerator.unwrap_model(network).on_epoch_start(text_encoder, unet)
             progress_bar = tqdm(range(math.ceil(len(train_dataloader) / accelerator.num_processes / args.gradient_accumulation_steps)), smoothing=0, disable=not accelerator.is_local_main_process, desc="steps")
             for step, batch in enumerate(train_dataloader):
@@ -1101,7 +1082,26 @@ class NetworkTrainer:
 
             accelerator.wait_for_everyone()
             progress_bar.close()
+            if args.incremental_reg_reload and epoch + 1 < num_train_epochs:
+                train_dataset_group.incremental_reg_load()
+                # train_dataset_group.make_buckets()
+                if cache_latents:
+                    vae.to(accelerator.device, dtype=vae_dtype)
+                    vae.requires_grad_(False)
+                    vae.eval()
+                    with torch.no_grad():
+                        train_dataset_group.cache_latents(vae, args.vae_batch_size, args.cache_latents_to_disk, accelerator.is_main_process)
+                    vae.to("cpu")
+                    clean_memory_on_device(accelerator.device)
+        
+                    accelerator.wait_for_everyone()
 
+            # 必要ならテキストエンコーダーの出力をキャッシュする: Text Encoderはcpuまたはgpuへ移される
+            # cache text encoder outputs if needed: Text Encoder is moved to cpu or gpu
+                if args.cache_text_encoder_outputs:
+                    self.cache_text_encoder_outputs_if_needed(
+                        args, accelerator, unet, vae, tokenizers, text_encoders, train_dataset_group, weight_dtype
+                    )
             # 指定エポックごとにモデルを保存
             if args.save_every_n_epochs is not None:
                 saving = (epoch + 1) % args.save_every_n_epochs == 0 and (epoch + 1) < num_train_epochs
