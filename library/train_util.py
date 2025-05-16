@@ -166,6 +166,8 @@ class ImageInfo:
         self.text_encoder_outputs2: Optional[torch.Tensor] = None
         self.text_encoder_pool2: Optional[torch.Tensor] = None
         self.alpha_mask: Optional[torch.Tensor] = None  # alpha mask can be flipped in runtime
+        self.latent_cache_checked: bool = False
+        self.te_cache_checked: bool = False
 
 
 class BucketManager:
@@ -1030,6 +1032,7 @@ class BaseDataset(torch.utils.data.Dataset):
         logger.info("caching latents.")
 
         image_infos = list(self.image_data.values())
+        image_infos = list(filter(lambda info: info.latent_cache_checked == False, image_infos))
 
         # sort by resolution
         image_infos.sort(key=lambda info: info.bucket_reso[0] * info.bucket_reso[1])
@@ -1056,6 +1059,7 @@ class BaseDataset(torch.utils.data.Dataset):
 
         logger.info("checking cache validity...")
         for info in tqdm(image_infos):
+            info.latent_cache_checked = True
             subset = self.image_to_subset[info.image_key]
 
             if info.latents_npz is not None:  # fine tuning dataset
@@ -1112,11 +1116,13 @@ class BaseDataset(torch.utils.data.Dataset):
         # またマルチGPUには対応していないので、そちらはtools/cache_latents.pyを使うこと
         logger.info("caching text encoder outputs.")
         image_infos = list(self.image_data.values())
+        image_infos = list(filter(lambda info: info.te_cache_checked == False, image_infos))
 
         logger.info("checking cache existence...")
         image_infos_to_cache = []
         for info in tqdm(image_infos):
             # subset = self.image_to_subset[info.image_key]
+            info.te_cache_checked = True
             if cache_to_disk:
                 te_out_npz = os.path.splitext(info.absolute_path)[0] + TEXT_ENCODER_OUTPUTS_CACHE_SUFFIX
                 info.text_encoder_outputs_npz = te_out_npz
