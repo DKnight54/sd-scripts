@@ -643,6 +643,7 @@ class BaseDataset(torch.utils.data.Dataset):
         self.current_step: int = 0
         self.max_train_steps: int = 0
         self.seed: int = 0
+        self.reload_reg: bool = False
 
         # augmentation
         self.aug_helper = AugHelper()
@@ -688,7 +689,10 @@ class BaseDataset(torch.utils.data.Dataset):
     def set_seed(self, seed):
         self.seed = seed
         
-    def force_reload_reg(self):
+    def set_reload_reg(self, reload_reg):
+        self.reload_red = reload_reg
+        
+    def incremental_reg_load(self):
         self.make_buckets()
         
     def set_caching_mode(self, mode):
@@ -1786,7 +1790,7 @@ class DreamBoothDataset(BaseDataset):
             count_str += f"\nSubset dir: {subset.image_dir}" if subset.image_dir is not None else ""
         logger.info(count_str)
     
-    def force_reload_reg(self):
+    def incremental_reg_load(self):
     #override to for loading random reg images
         if self.num_reg_images == 0:
             logger.warning("no regularization images / 正則化画像が見つかりませんでした")
@@ -2168,8 +2172,8 @@ class ControlNetDataset(BaseDataset):
         self.bucket_manager = self.dreambooth_dataset_delegate.bucket_manager
         self.buckets_indices = self.dreambooth_dataset_delegate.buckets_indices
     
-    def force_reload_reg(self):
-        self.dreambooth_dataset_delegate.force_reload_reg()
+    def incremental_reg_load(self):
+        self.dreambooth_dataset_delegate.incremental_reg_load()
         self.bucket_manager = self.dreambooth_dataset_delegate.bucket_manager
         self.buckets_indices = self.dreambooth_dataset_delegate.buckets_indices
         
@@ -2255,9 +2259,9 @@ class DatasetGroup(torch.utils.data.ConcatDataset):
         for dataset in self.datasets:
             dataset.add_replacement(str_from, str_to)
 
-    # def make_buckets(self):
-    #   for dataset in self.datasets:
-    #     dataset.make_buckets()
+    def make_buckets(self):
+        for dataset in self.datasets:
+            dataset.make_buckets()
 
     def enable_XTI(self, *args, **kwargs):
         for dataset in self.datasets:
@@ -2305,9 +2309,9 @@ class DatasetGroup(torch.utils.data.ConcatDataset):
         for dataset in self.datasets:
             dataset.disable_token_padding()
 
-    def force_reload_reg(self):
+    def incremental_reg_load(self):
         for dataset in self.datasets:
-            dataset.force_reload_reg()
+            dataset.incremental_reg_load()
 
 def is_disk_cached_latents_is_expected(reso, npz_path: str, flip_aug: bool, alpha_mask: bool):
     expected_latents_size = (reso[1] // 8, reso[0] // 8)  # bucket_resoはWxHなので注意
@@ -3653,7 +3657,7 @@ def add_training_arguments(parser: argparse.ArgumentParser, support_dreambooth: 
         help="tags for model metadata, separated by comma / メタデータに書き込まれるモデルタグ、カンマ区切り",
     )
     parser.add_argument(
-        "--force_reload_reg",
+        "--incremental_reg_load",
         action="store_true",
         help="Forces reload of regularization images. Useful if there are more regularization images than training images",
     )
