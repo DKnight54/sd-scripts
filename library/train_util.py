@@ -705,15 +705,17 @@ class BaseDataset(torch.utils.data.Dataset):
                 num_epochs = epoch - self.current_epoch
                 for _ in range(num_epochs):
                     self.current_epoch += 1
-                    #if self.reload_reg:
-                    #    self.incremental_reg_load()
-                    #    self.make_buckets()
+                    if self.reload_reg:
+                        self.incremental_reg_load()
                     self.shuffle_buckets()
                 # self.current_epoch seem to be set to 0 again in the next epoch. it may be caused by skipped_dataloader?
             else:
                 logger.warning("epoch is not incremented. current_epoch: {}, epoch: {}".format(self.current_epoch, epoch))
                 self.current_epoch = epoch
 
+    def set_epoch(self, epoch):
+        self.set_current_epoch(epoch)
+        
     def set_current_step(self, step):
         self.current_step = step
 
@@ -1800,7 +1802,7 @@ class DreamBoothDataset(BaseDataset):
             return
         if self.num_train_images < self.num_reg_images:
             logger.warning("some of reg images are not used / 正則化画像の数が多いので、一部使用されない正則化画像があります")    
-        logger.info(f"Forced random reload of reg images.")
+        logger.info(f"Forcing random reload of reg images.")
         for info, subset in self.reg_infos:
             if info.image_key in self.image_data:
                 self.image_data.pop(info.image_key, None)
@@ -2303,6 +2305,9 @@ class DatasetGroup(torch.utils.data.ConcatDataset):
     def set_current_epoch(self, epoch):
         for dataset in self.datasets:
             dataset.set_current_epoch(epoch)
+
+    def set_epoch(self, epoch):
+        self.set_current_epoch(epoch)
 
     def set_current_step(self, step):
         for dataset in self.datasets:
