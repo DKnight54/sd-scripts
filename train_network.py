@@ -264,23 +264,24 @@ class NetworkTrainer:
             accelerator.print(f"all weights merged: {', '.join(args.base_weights)}")
 
         # 学習を準備する
-        if cache_latents and not args.incremental_reg_reload: # Skip caching here if incremental reg reload as will be caching at start of epoch
-            vae.to(accelerator.device, dtype=vae_dtype)
-            vae.requires_grad_(False)
-            vae.eval()
-            with torch.no_grad():
-                train_dataset_group.cache_latents(vae, args.vae_batch_size, args.cache_latents_to_disk, accelerator.is_main_process)
-            vae.to("cpu")
-            clean_memory_on_device(accelerator.device)
-
-            accelerator.wait_for_everyone()
-
-        # 必要ならテキストエンコーダーの出力をキャッシュする: Text Encoderはcpuまたはgpuへ移される
-        # cache text encoder outputs if needed: Text Encoder is moved to cpu or gpu
         if not args.incremental_reg_reload:
-            self.cache_text_encoder_outputs_if_needed(
-                args, accelerator, unet, vae, tokenizers, text_encoders, train_dataset_group, weight_dtype
-            )
+            if cache_latents: # Skip caching here if incremental reg reload as will be caching at start of epoch
+                vae.to(accelerator.device, dtype=vae_dtype)
+                vae.requires_grad_(False)
+                vae.eval()
+                with torch.no_grad():
+                    train_dataset_group.cache_latents(vae, args.vae_batch_size, args.cache_latents_to_disk, accelerator.is_main_process)
+                vae.to("cpu")
+                clean_memory_on_device(accelerator.device)
+    
+                accelerator.wait_for_everyone()
+    
+            # 必要ならテキストエンコーダーの出力をキャッシュする: Text Encoderはcpuまたはgpuへ移される
+            # cache text encoder outputs if needed: Text Encoder is moved to cpu or gpu
+            if args.cache_text_encoder_outputs:
+                self.cache_text_encoder_outputs_if_needed(
+                    args, accelerator, unet, vae, tokenizers, text_encoders, train_dataset_group, weight_dtype
+                )
 
         # prepare network
         net_kwargs = {}
@@ -891,20 +892,22 @@ class NetworkTrainer:
         for epoch in range(epoch_to_start, num_train_epochs):
             accelerator.print(f"\nepoch {epoch+1}/{num_train_epochs}")
             current_epoch.value = epoch + 1
-            if cache_latents and args.incremental_reg_reload: # Skip caching here if incremental reg reload as will be caching at start of epoch
-                vae.to(accelerator.device, dtype=vae_dtype)
-                vae.requires_grad_(False)
-                vae.eval()
-                with torch.no_grad():
-                    train_dataset_group.cache_latents(vae, args.vae_batch_size, args.cache_latents_to_disk, accelerator.is_main_process)
-                vae.to("cpu")
-                clean_memory_on_device(accelerator.device)
-    
-                accelerator.wait_for_everyone()
+            if args.incremental_reg_reload:
+                if cache_latents: # caching here at start of epoch if incremental_reg_reload
+                    vae.to(accelerator.device, dtype=vae_dtype)
+                    vae.requires_grad_(False)
+                    vae.eval()
+                    with torch.no_grad():
+                        train_dataset_group.cache_latents(vae, args.vae_batch_size, args.cache_latents_to_disk, accelerator.is_main_process)
+                    vae.to("cpu")
+                    clean_memory_on_device(accelerator.device)
+        
+                    accelerator.wait_for_everyone()
 
             # 必要ならテキストエンコーダーの出力をキャッシュする: Text Encoderはcpuまたはgpuへ移される
             # cache text encoder outputs if needed: Text Encoder is moved to cpu or gpu
-            if args.incremental_reg_reload:
+
+                if args.cache_text_encoder_outputs:
                 self.cache_text_encoder_outputs_if_needed(
                     args, accelerator, unet, vae, tokenizers, text_encoders, train_dataset_group, weight_dtype
                 )
