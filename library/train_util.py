@@ -1797,6 +1797,7 @@ class DreamBoothDataset(BaseDataset):
         temp_reg_infos = copy.deepcopy(self.reg_infos) # Deepcopy list of regularization images to maintain original repeats
         first_loop = True # Flag to check if all available reg images have been loaded once.
         start_index = self.reg_infos_index
+        n = 0
         
         while n < self.num_train_images:
             info, subset = temp_reg_infos[self.reg_infos_index]
