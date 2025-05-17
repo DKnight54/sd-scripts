@@ -2159,7 +2159,9 @@ class ControlNetDataset(BaseDataset):
         self.conditioning_image_transforms = IMAGE_TRANSFORMS
 
     def incremental_reg_load(self, make_bucket = False):
-        self.dreambooth_dataset_delegate.incremental_reg_load(make_bucket)
+        self.dreambooth_dataset_delegate.incremental_reg_load()
+        if make_bucket:
+            self.make_buckets()
         
     def make_buckets(self):
         self.dreambooth_dataset_delegate.make_buckets()
