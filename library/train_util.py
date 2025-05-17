@@ -642,7 +642,6 @@ class BaseDataset(torch.utils.data.Dataset):
         self.current_step: int = 0
         self.max_train_steps: int = 0
         self.seed: int = 0
-        self.reload_reg: bool = False
 
         # augmentation
         self.aug_helper = AugHelper()
@@ -687,10 +686,7 @@ class BaseDataset(torch.utils.data.Dataset):
 
     def set_seed(self, seed):
         self.seed = seed
-
-    def set_reload_reg(self, reload_reg):
-        self.reload_reg = reload_reg
-    
+   
     def incremental_reg_load(self, make_bucket = False): # Placeholder method, does nothing unless overridden in subclasses.
         return
 
@@ -709,9 +705,6 @@ class BaseDataset(torch.utils.data.Dataset):
             else:
                 logger.warning("epoch is not incremented. current_epoch: {}, epoch: {}".format(self.current_epoch, epoch))
                 self.current_epoch = epoch
-
-    def set_epoch(self, epoch):
-        self.set_current_epoch(epoch)
         
     def set_current_step(self, step):
         self.current_step = step
@@ -2249,14 +2242,6 @@ class DatasetGroup(torch.utils.data.ConcatDataset):
     def incremental_reg_load(self, make_bucket = False):
         for dataset in self.datasets:
             dataset.incremental_reg_load(make_bucket)
-        
-    def set_reload_reg(self, reload_reg):
-        for dataset in self.datasets:
-            dataset.set_reload_reg(reload_reg)
-
-    def set_epoch(self, epoch):
-        for dataset in self.datasets:
-            dataset.set_current_epoch(epoch)
         
     def add_replacement(self, str_from, str_to):
         for dataset in self.datasets:
