@@ -1777,7 +1777,7 @@ class DreamBoothDataset(BaseDataset):
                 first_loop = False
         '''
         self.num_reg_images = num_reg_images
-        self.incremental_reg_load(make_bucket = True)
+        self.incremental_reg_load()
 
     def incremental_reg_load(self, make_bucket = False):
         if self.num_reg_images == 0:
