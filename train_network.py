@@ -263,8 +263,7 @@ class NetworkTrainer:
                 module.merge_to(text_encoder, unet, weights_sd, weight_dtype, accelerator.device if args.lowram else "cpu")
 
             accelerator.print(f"all weights merged: {', '.join(args.base_weights)}")
-        if args.incremental_reg_reload:
-            train_dataset_group.set_reg_reload(args.incremental_reg_reload)
+
         # 学習を準備する
             # train_dataset_group.make_buckets()
         if cache_latents:
@@ -818,7 +817,9 @@ class NetworkTrainer:
                     )
                 if args.resume_from_epoch and epoch_from_state is not None:
                     epoch_to_start = epoch_from_state
-                    initial_step = 0 #Skips only epochs
+                    initial_step = (epoch_to_start - 1) * math.ceil(
+                        len(train_dataloader) / accelerator.num_processes / args.gradient_accumulation_steps
+                    ) #Skips only epochs
                 else:
                     logger.info(f"skipping {initial_step} steps / {initial_step}ステップをスキップします")
                     initial_step *= args.gradient_accumulation_steps
@@ -887,15 +888,33 @@ class NetworkTrainer:
 
         # training loop
         if initial_step > 0:  # only if skip_until_initial_step is specified
+            if args.incremental_reg_reload:
+                '''
+                # Exhaust dataloader to reload skipped reg images correctly
+                skipped_dataloader = accelerator.skip_first_batches(train_dataloader, len(train_dataloader) - 1)
+                for step, batch in enumerate(skipped_dataloader):
+                    accelerator.print(f"skipping step {step}")
+                    continue
+                '''
             for skip_epoch in range(epoch_to_start):  # skip epochs
                 logger.info(f"skipping epoch {skip_epoch+1} because initial_step (multiplied) is {initial_step}")
                 initial_step -= len(train_dataloader)
-            train_dataloader.set_epoch(epoch_to_start)
-            if initial_step > 0: #skip past remaining steps
-                skipped_dataloader = accelerator.skip_first_batches(train_dataloader, initial_step)
-                logger.info(f"skipping {initial_step} steps")
-                initial_step = 0
-                train_dataloader = skipped_dataloader
+                if args.incremental_reg_reload:
+                    train_dataset_group.incremental_reg_load()
+            if args.incremental_reg_reload:
+                train_dataset_group.make_buckets()
+                '''
+                train_dataloader = torch.utils.data.DataLoader(
+                    train_dataset_group,
+                    batch_size=1,
+                    shuffle=True,
+                    collate_fn=collator,
+                    num_workers=n_workers,
+                    persistent_workers=args.persistent_data_loader_workers,
+                )
+                '''
+                train_dataloader = accelerator.prepare(train_dataloader)
+
         
         for epoch in range(epoch_to_start, num_train_epochs):
             accelerator.print(f"\nepoch {epoch+1}/{num_train_epochs}")
@@ -904,9 +923,17 @@ class NetworkTrainer:
             metadata["ss_epoch"] = str(epoch + 1)
 
             accelerator.unwrap_model(network).on_epoch_start(text_encoder, unet)
+
+            skipped_dataloader = None
+            if initial_step > 0:
+                skipped_dataloader = accelerator.skip_first_batches(train_dataloader, initial_step - 1)
+                initial_step = 1
             progress_bar = tqdm(range(math.ceil(len(train_dataloader) / accelerator.num_processes / args.gradient_accumulation_steps)), smoothing=0, disable=not accelerator.is_local_main_process, desc="steps")
-            for step, batch in enumerate(train_dataloader):
+            for step, batch in enumerate(skipped_dataloader or train_dataloader):
                 current_step.value = global_step
+                if initial_step > 0:
+                    initial_step -= 1
+                    continue
 
                 with accelerator.accumulate(training_model):
                     on_step_start(text_encoder, unet)
@@ -1080,26 +1107,7 @@ class NetworkTrainer:
 
             accelerator.wait_for_everyone()
             progress_bar.close()
-            if args.incremental_reg_reload and epoch + 1 < num_train_epochs:
-                train_dataset_group.incremental_reg_load()
-                # train_dataset_group.make_buckets()
-                if cache_latents:
-                    vae.to(accelerator.device, dtype=vae_dtype)
-                    vae.requires_grad_(False)
-                    vae.eval()
-                    with torch.no_grad():
-                        train_dataset_group.cache_latents(vae, args.vae_batch_size, args.cache_latents_to_disk, accelerator.is_main_process)
-                    vae.to("cpu")
-                    clean_memory_on_device(accelerator.device)
-        
-                    accelerator.wait_for_everyone()
 
-            # 必要ならテキストエンコーダーの出力をキャッシュする: Text Encoderはcpuまたはgpuへ移される
-            # cache text encoder outputs if needed: Text Encoder is moved to cpu or gpu
-                if args.cache_text_encoder_outputs:
-                    self.cache_text_encoder_outputs_if_needed(
-                        args, accelerator, unet, vae, tokenizers, text_encoders, train_dataset_group, weight_dtype
-                    )
             # 指定エポックごとにモデルを保存
             if args.save_every_n_epochs is not None:
                 saving = (epoch + 1) % args.save_every_n_epochs == 0 and (epoch + 1) < num_train_epochs
@@ -1118,7 +1126,26 @@ class NetworkTrainer:
             if args.sample_every_n_epochs is not None and (epoch + 1)% args.sample_every_n_epochs == 0:
                 example_tuple = (latents, batch["captions"])
                 self.sample_images(accelerator, args, epoch + 1, global_step, accelerator.device, vae, tokenizer, text_encoder, unet, example_tuple)
+            
+            if args.incremental_reg_reload and epoch + 1 < num_train_epochs:
+                train_dataset_group.incremental_reg_load(True)
+                if cache_latents:
+                    vae.to(accelerator.device, dtype=vae_dtype)
+                    vae.requires_grad_(False)
+                    vae.eval()
+                    with torch.no_grad():
+                        train_dataset_group.cache_latents(vae, args.vae_batch_size, args.cache_latents_to_disk, accelerator.is_main_process)
+                    vae.to("cpu")
+                    clean_memory_on_device(accelerator.device)
+        
+                    accelerator.wait_for_everyone()
 
+            # 必要ならテキストエンコーダーの出力をキャッシュする: Text Encoderはcpuまたはgpuへ移される
+            # cache text encoder outputs if needed: Text Encoder is moved to cpu or gpu
+                if args.cache_text_encoder_outputs:
+                    self.cache_text_encoder_outputs_if_needed(
+                        args, accelerator, unet, vae, tokenizers, text_encoders, train_dataset_group, weight_dtype
+                    )
             # end of epoch
 
         # metadata["ss_epoch"] = str(num_train_epochs)
