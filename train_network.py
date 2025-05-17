@@ -910,9 +910,9 @@ class NetworkTrainer:
             # cache text encoder outputs if needed: Text Encoder is moved to cpu or gpu
 
                 if args.cache_text_encoder_outputs:
-                self.cache_text_encoder_outputs_if_needed(
-                    args, accelerator, unet, vae, tokenizers, text_encoders, train_dataset_group, weight_dtype
-                )
+                    self.cache_text_encoder_outputs_if_needed(
+                        args, accelerator, unet, vae, tokenizers, text_encoders, train_dataset_group, weight_dtype
+                    )
             metadata["ss_epoch"] = str(epoch + 1)
 
             accelerator.unwrap_model(network).on_epoch_start(text_encoder, unet)
