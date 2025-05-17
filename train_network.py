@@ -886,7 +886,7 @@ class NetworkTrainer:
         skipped_dataloader = accelerator.skip_first_batches(train_dataloader, len(train_dataloader) - 1)
         train_dataloader = skipped_dataloader
         batch = next(iter(train_dataloader))
-        del step, batch
+        del batch
         if initial_step > 0:  # only if skip_until_initial_step is specified
             for skip_epoch in range(epoch_to_start):  # skip epochs
                 logger.info(f"skipping epoch {skip_epoch+1} because initial_step (multiplied) is {initial_step}")
