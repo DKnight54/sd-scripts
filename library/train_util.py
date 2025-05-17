@@ -704,9 +704,9 @@ class BaseDataset(torch.utils.data.Dataset):
                 num_epochs = epoch - self.current_epoch
                 for _ in range(num_epochs):
                     self.current_epoch += 1
-                    if self.reload_reg:
-                        self.incremental_reg_load()
-                        self.make_buckets()
+                    #if self.reload_reg:
+                    #    self.incremental_reg_load()
+                    #    self.make_buckets()
                     self.shuffle_buckets()
                 # self.current_epoch seem to be set to 0 again in the next epoch. it may be caused by skipped_dataloader?
             else:
