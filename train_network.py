@@ -885,7 +885,7 @@ class NetworkTrainer:
         train_dataloader.set_epoch(epoch_to_start-1)
         skipped_dataloader = accelerator.skip_first_batches(train_dataloader, len(train_dataloader) - 1)
         train_dataloader = skipped_dataloader
-        step, batch = next(iter(train_dataloader))
+        batch = next(iter(train_dataloader))
         del step, batch
         if initial_step > 0:  # only if skip_until_initial_step is specified
             for skip_epoch in range(epoch_to_start):  # skip epochs
@@ -1114,7 +1114,9 @@ class NetworkTrainer:
                         train_util.save_and_remove_state_on_epoch_end(args, accelerator, epoch + 1)
 
             self.sample_images(accelerator, args, epoch + 1, global_step, accelerator.device, vae, tokenizer, text_encoder, unet)
-
+            if args.incremental_reg_reload:
+                train_dataset_group.incremental_reg_load()
+                train_dataset_group.make_buckets()
             # end of epoch
 
         # metadata["ss_epoch"] = str(num_train_epochs)
