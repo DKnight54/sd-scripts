@@ -1787,7 +1787,7 @@ class DreamBoothDataset(BaseDataset):
                 return
         if self.num_train_images < self.num_reg_images:
             logger.warning("some of reg images are not used / 正則化画像の数が多いので、一部使用されない正則化画像があります")
-
+        reg_img_log = f"\nDataset seed: {self.seed}"
         # Clearing previously loaded reg images from buckets
         for info, subset in self.reg_infos:
             if info.image_key in self.image_data:
@@ -1796,7 +1796,7 @@ class DreamBoothDataset(BaseDataset):
         temp_reg_infos = copy.deepcopy(self.reg_infos) # Deepcopy list of regularization images to maintain original repeats
         first_loop = True # Flag to check if all available reg images have been loaded once.
         start_index = self.reg_infos_index
-        reg_img_log = f"\nDataset seed: {self.seed}"
+        
         while n < self.num_train_images:
             info, subset = temp_reg_infos[self.reg_infos_index]
             if first_loop:
@@ -1811,8 +1811,8 @@ class DreamBoothDataset(BaseDataset):
             if first_loop and self.reg_infos_index == start_index:
                 first_loop = False
             reg_img_log += f"\nRegistering image: {info.absolute_path}, count: {info.num_repeats}"
-    logger.info(reg_img_log)    
-    del temp_reg_infos
+        logger.info(reg_img_log)    
+        del temp_reg_infos
 
 class FineTuningDataset(BaseDataset):
     def __init__(
