@@ -463,8 +463,7 @@ class NetworkTrainer:
         del t_enc
 
         accelerator.unwrap_model(network).prepare_grad_etc(text_encoder, unet)
-        if args.incremental_reg_reload:
-            train_dataset_group.set_reload_reg(args.incremental_reg_reload)
+
         if not cache_latents:  # キャッシュしない場合はVAEを使うのでVAEを準備する
             vae.requires_grad_(False)
             vae.eval()
@@ -882,10 +881,7 @@ class NetworkTrainer:
         self.sample_images(accelerator, args, 0, global_step, accelerator.device, vae, tokenizer, text_encoder, unet)
 
         # training loop
-        
-        #for step, batch in enumerate(train_dataloader):
-        #    accelerator.print(f"skipping step {step}")
-        #    continue
+
         if initial_step > 0:  # only if skip_until_initial_step is specified
             if args.incremental_reg_reload:
                 # Exhaust dataloader to reload skipped reg images correctly
@@ -902,7 +898,8 @@ class NetworkTrainer:
             if args.incremental_reg_reload:
                 train_dataset_group.make_buckets()
             global_step = initial_step
-
+            train_dataloader.set_epoch(epoch_to_start)
+            
         for epoch in range(epoch_to_start, num_train_epochs):
             accelerator.print(f"\nepoch {epoch+1}/{num_train_epochs}")
             current_epoch.value = epoch + 1
