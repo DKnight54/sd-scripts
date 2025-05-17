@@ -692,8 +692,8 @@ class BaseDataset(torch.utils.data.Dataset):
     def set_reg_reload(self, reload_reg):
         self.reload_reg = reload_reg
 
-    def incremental_reg_load(self):
-        self.make_buckets()
+    def incremental_reg_load(self, make_bucket = False): # Placeholder method, does nothing unless overridden in subclasses.
+        return
         
     def set_caching_mode(self, mode):
         self.caching_mode = mode
@@ -1795,7 +1795,7 @@ class DreamBoothDataset(BaseDataset):
             count_str += f"\nSubset dir: {subset.image_dir}" if subset.image_dir is not None else ""
         logger.info(count_str)
     
-    def incremental_reg_load(self):
+    def incremental_reg_load(self, make_bucket = False):
     #override to for loading random reg images
         if self.num_reg_images == 0:
             logger.warning("no regularization images / 正則化画像が見つかりませんでした")
@@ -1825,7 +1825,8 @@ class DreamBoothDataset(BaseDataset):
                     break
             random.shuffle(temp_reg_infos)
         logger.info(reg_img_log)
-        self.make_buckets()
+        if make_bucket:
+            self.make_buckets()
         del temp_reg_infos
         self.subset_loaded_count()
 
@@ -2177,10 +2178,10 @@ class ControlNetDataset(BaseDataset):
         self.bucket_manager = self.dreambooth_dataset_delegate.bucket_manager
         self.buckets_indices = self.dreambooth_dataset_delegate.buckets_indices
     
-    def incremental_reg_load(self):
+    def incremental_reg_load(self, make_bucket = False):
         self.dreambooth_dataset_delegate.incremental_reg_load()
-        self.bucket_manager = self.dreambooth_dataset_delegate.bucket_manager
-        self.buckets_indices = self.dreambooth_dataset_delegate.buckets_indices
+        if make_bucket:
+            self.make_buckets()
         
     def cache_latents(self, vae, vae_batch_size=1, cache_to_disk=False, is_main_process=True):
         return self.dreambooth_dataset_delegate.cache_latents(vae, vae_batch_size, cache_to_disk, is_main_process)
@@ -2321,9 +2322,9 @@ class DatasetGroup(torch.utils.data.ConcatDataset):
         for dataset in self.datasets:
             dataset.disable_token_padding()
 
-    def incremental_reg_load(self):
+    def incremental_reg_load(self, make_bucket = False):
         for dataset in self.datasets:
-            dataset.incremental_reg_load()
+            dataset.incremental_reg_load(make_bucket)
 
 def is_disk_cached_latents_is_expected(reso, npz_path: str, flip_aug: bool, alpha_mask: bool):
     expected_latents_size = (reso[1] // 8, reso[0] // 8)  # bucket_resoはWxHなので注意
