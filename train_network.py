@@ -904,7 +904,7 @@ class NetworkTrainer:
                     train_dataset_group.incremental_reg_load()
             if args.incremental_reg_reload:
                 train_dataset_group.make_buckets()
-                '''
+                
                 train_dataloader = torch.utils.data.DataLoader(
                     train_dataset_group,
                     batch_size=1,
@@ -913,7 +913,7 @@ class NetworkTrainer:
                     num_workers=n_workers,
                     persistent_workers=args.persistent_data_loader_workers,
                 )
-                '''
+                
                 train_dataloader = accelerator.prepare(train_dataloader)
 
         
