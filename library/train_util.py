@@ -712,6 +712,9 @@ class BaseDataset(torch.utils.data.Dataset):
                 logger.warning("epoch is not incremented. current_epoch: {}, epoch: {}".format(self.current_epoch, epoch))
                 self.current_epoch = epoch
 
+    def set_epoch(self, epoch):
+        self.set_current_epoch(epoch)
+        
     def set_current_step(self, step):
         self.current_step = step
 
@@ -2247,7 +2250,11 @@ class DatasetGroup(torch.utils.data.ConcatDataset):
     def set_reload_reg(self, reload_reg):
         for dataset in self.datasets:
             dataset.set_reload_reg(reload_reg)
-            
+
+    def set_epoch(self, epoch):
+        for dataset in self.datasets:
+            dataset.set_current_epoch(epoch)
+        
     def add_replacement(self, str_from, str_to):
         for dataset in self.datasets:
             dataset.add_replacement(str_from, str_to)
