@@ -691,7 +691,7 @@ class BaseDataset(torch.utils.data.Dataset):
     def set_reload_reg(self, reload_reg):
         self.reload_reg = reload_reg
     
-    def incremental_reg_load(self): # Placeholder method, does nothing unless overridden in subclasses.
+    def incremental_reg_load(self, make_bucket = False): # Placeholder method, does nothing unless overridden in subclasses.
         return
 
     def set_caching_mode(self, mode):
@@ -704,9 +704,6 @@ class BaseDataset(torch.utils.data.Dataset):
                 num_epochs = epoch - self.current_epoch
                 for _ in range(num_epochs):
                     self.current_epoch += 1
-                    #if self.reload_reg:
-                    #    self.incremental_reg_load()
-                    #    self.make_buckets()
                     self.shuffle_buckets()
                 # self.current_epoch seem to be set to 0 again in the next epoch. it may be caused by skipped_dataloader?
             else:
@@ -1780,9 +1777,9 @@ class DreamBoothDataset(BaseDataset):
                 first_loop = False
         '''
         self.num_reg_images = num_reg_images
-        self.incremental_reg_load()
+        self.incremental_reg_load(make_bucket = True)
 
-    def incremental_reg_load(self):
+    def incremental_reg_load(self, make_bucket = False):
         if self.num_reg_images == 0:
                 logger.warning("no regularization images / 正則化画像が見つかりませんでした")
                 return
@@ -1815,6 +1812,8 @@ class DreamBoothDataset(BaseDataset):
             reg_img_log += f"\nRegistering image: {info.absolute_path}, count: {info.num_repeats}"
         logger.info(reg_img_log)    
         del temp_reg_infos
+        if make_bucket:
+            self.make_buckets()
 
 class FineTuningDataset(BaseDataset):
     def __init__(
@@ -2159,8 +2158,8 @@ class ControlNetDataset(BaseDataset):
 
         self.conditioning_image_transforms = IMAGE_TRANSFORMS
 
-    def incremental_reg_load(self):
-        self.dreambooth_dataset_delegate.incremental_reg_load()
+    def incremental_reg_load(self, make_bucket = False):
+        self.dreambooth_dataset_delegate.incremental_reg_load(make_bucket)
         
     def make_buckets(self):
         self.dreambooth_dataset_delegate.make_buckets()
@@ -2245,9 +2244,9 @@ class DatasetGroup(torch.utils.data.ConcatDataset):
             self.num_train_images += dataset.num_train_images
             self.num_reg_images += dataset.num_reg_images
 
-    def incremental_reg_load(self):
+    def incremental_reg_load(self, make_bucket = False):
         for dataset in self.datasets:
-            dataset.incremental_reg_load()
+            dataset.incremental_reg_load(make_bucket)
         
     def set_reload_reg(self, reload_reg):
         for dataset in self.datasets:
