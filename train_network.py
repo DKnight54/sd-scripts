@@ -895,13 +895,12 @@ class NetworkTrainer:
             for skip_epoch in range(epoch_to_start):  # skip epochs
                 logger.info(f"skipping epoch {skip_epoch+1} because initial_step (multiplied) is {initial_step}")
                 initial_step -= len(train_dataloader)
-                if skip_epoch < epoch_to_start:
-                    train_dataset_group.incremental_reg_load()
+                train_dataset_group.incremental_reg_load()
             train_dataset_group.make_buckets()
             global_step = initial_step
-            skipped_dataloader = accelerator.skip_first_batches(train_dataloader, initial_step - 1)
-            initial_step = 1
-            train_dataloader = skipped_dataloader
+            #skipped_dataloader = accelerator.skip_first_batches(train_dataloader, initial_step - 1)
+            #initial_step = 1
+            #train_dataloader = skipped_dataloader
         for epoch in range(epoch_to_start, num_train_epochs):
             accelerator.print(f"\nepoch {epoch+1}/{num_train_epochs}")
             current_epoch.value = epoch + 1
