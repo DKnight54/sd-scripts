@@ -1744,7 +1744,7 @@ class DreamBoothDataset(BaseDataset):
                 if size is not None:
                     info.image_size = size
                 if subset.is_reg:
-                    reg_infos.append((info, subset))
+                    self.reg_infos.append((info, subset))
                 else:
                     self.register_image(info, subset)
 
@@ -1798,7 +1798,7 @@ class DreamBoothDataset(BaseDataset):
         first_loop = True # Flag to check if all available reg images have been loaded once.
         start_index = self.reg_infos_index
         n = 0
-        
+        logger.info(f"self.reg_infos_index at: {self.reg_infos_index}\n temp_reg_infos len = {len(temp_reg_infos)}")
         while n < self.num_train_images:
             info, subset = temp_reg_infos[self.reg_infos_index]
             if first_loop:
