@@ -882,25 +882,27 @@ class NetworkTrainer:
         self.sample_images(accelerator, args, 0, global_step, accelerator.device, vae, tokenizer, text_encoder, unet)
 
         # training loop
-        #skipped_dataloader = accelerator.skip_first_batches(train_dataloader, len(train_dataloader) - 1)
-        #train_dataloader = skipped_dataloader
+        
         #for step, batch in enumerate(train_dataloader):
         #    accelerator.print(f"skipping step {step}")
         #    continue
         if initial_step > 0:  # only if skip_until_initial_step is specified
-            train_dataloader.set_epoch(epoch_to_start)
-            for step, batch in enumerate(train_dataloader):
-                accelerator.print(f"skipping step {step}")
-                continue
+            if args.incremental_reg_reload:
+                # Exhaust dataloader to reload skipped reg images correctly
+                skipped_dataloader = accelerator.skip_first_batches(train_dataloader, len(train_dataloader) - 1)
+                for step, batch in enumerate(skipped_dataloader):
+                    accelerator.print(f"skipping step {step}")
+                    continue
             for skip_epoch in range(epoch_to_start):  # skip epochs
                 logger.info(f"skipping epoch {skip_epoch+1} because initial_step (multiplied) is {initial_step}")
                 initial_step -= len(train_dataloader)
-                train_dataset_group.incremental_reg_load()
-            train_dataset_group.make_buckets()
+                # Skip reg images
+                if args.incremental_reg_reload:
+                    train_dataset_group.incremental_reg_load()
+            if args.incremental_reg_reload:
+                train_dataset_group.make_buckets()
             global_step = initial_step
-            #skipped_dataloader = accelerator.skip_first_batches(train_dataloader, initial_step - 1)
-            #initial_step = 1
-            #train_dataloader = skipped_dataloader
+
         for epoch in range(epoch_to_start, num_train_epochs):
             accelerator.print(f"\nepoch {epoch+1}/{num_train_epochs}")
             current_epoch.value = epoch + 1
@@ -926,8 +928,13 @@ class NetworkTrainer:
             metadata["ss_epoch"] = str(epoch + 1)
 
             accelerator.unwrap_model(network).on_epoch_start(text_encoder, unet)
-
-            for step, batch in enumerate(train_dataloader):
+            
+            skipped_dataloader = None
+            if initial_step > 0:
+                skipped_dataloader = accelerator.skip_first_batches(train_dataloader, initial_step - 1)
+                initial_step = 1
+                
+            for step, batch in enumerate(skipped_dataloader or train_dataloader):
                 current_step.value = global_step
                 if initial_step > 0:
                     initial_step -= 1
