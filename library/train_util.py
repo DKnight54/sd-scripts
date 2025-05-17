@@ -1784,6 +1784,7 @@ class DreamBoothDataset(BaseDataset):
                 counter += self.image_data[img_key].num_repeats
             count_str += f"{counter}/{subset.img_count * subset.num_repeats}"
             count_str += f"\nSubset dir: {subset.image_dir}" if subset.image_dir is not None else ""
+        count_str += f"\n\n"
         logger.info(count_str)
     
     def incremental_reg_load(self, make_bucket = False):
