@@ -265,23 +265,23 @@ class NetworkTrainer:
             accelerator.print(f"all weights merged: {', '.join(args.base_weights)}")
 
         # 学習を準備する
-            # train_dataset_group.make_buckets()
-        if cache_latents:
-            vae.to(accelerator.device, dtype=vae_dtype)
-            vae.requires_grad_(False)
-            vae.eval()
-            with torch.no_grad():
-                train_dataset_group.cache_latents(vae, args.vae_batch_size, args.cache_latents_to_disk, accelerator.is_main_process)
-            vae.to("cpu")
-            clean_memory_on_device(accelerator.device)
-
-            accelerator.wait_for_everyone()
-
-        # 必要ならテキストエンコーダーの出力をキャッシュする: Text Encoderはcpuまたはgpuへ移される
-        # cache text encoder outputs if needed: Text Encoder is moved to cpu or gpu
-        self.cache_text_encoder_outputs_if_needed(
-            args, accelerator, unet, vae, tokenizers, text_encoders, train_dataset_group, weight_dtype
-        )
+        if not args.incremental_reg_reload:
+            if cache_latents:
+                vae.to(accelerator.device, dtype=vae_dtype)
+                vae.requires_grad_(False)
+                vae.eval()
+                with torch.no_grad():
+                    train_dataset_group.cache_latents(vae, args.vae_batch_size, args.cache_latents_to_disk, accelerator.is_main_process)
+                vae.to("cpu")
+                clean_memory_on_device(accelerator.device)
+    
+                accelerator.wait_for_everyone()
+    
+            # 必要ならテキストエンコーダーの出力をキャッシュする: Text Encoderはcpuまたはgpuへ移される
+            # cache text encoder outputs if needed: Text Encoder is moved to cpu or gpu
+            self.cache_text_encoder_outputs_if_needed(
+                args, accelerator, unet, vae, tokenizers, text_encoders, train_dataset_group, weight_dtype
+            )
 
         # prepare network
         net_kwargs = {}
@@ -920,6 +920,24 @@ class NetworkTrainer:
             accelerator.print(f"\nepoch {epoch+1}/{num_train_epochs}")
             current_epoch.value = epoch + 1
 
+            if args.incremental_reg_reload:
+                if cache_latents:
+                    vae.to(accelerator.device, dtype=vae_dtype)
+                    vae.requires_grad_(False)
+                    vae.eval()
+                    with torch.no_grad():
+                        train_dataset_group.cache_latents(vae, args.vae_batch_size, args.cache_latents_to_disk, accelerator.is_main_process)
+                    vae.to("cpu")
+                    clean_memory_on_device(accelerator.device)
+        
+                    accelerator.wait_for_everyone()
+
+            # 必要ならテキストエンコーダーの出力をキャッシュする: Text Encoderはcpuまたはgpuへ移される
+            # cache text encoder outputs if needed: Text Encoder is moved to cpu or gpu
+                if args.cache_text_encoder_outputs:
+                    self.cache_text_encoder_outputs_if_needed(
+                        args, accelerator, unet, vae, tokenizers, text_encoders, train_dataset_group, weight_dtype
+                    )            
             metadata["ss_epoch"] = str(epoch + 1)
 
             accelerator.unwrap_model(network).on_epoch_start(text_encoder, unet)
@@ -1129,23 +1147,7 @@ class NetworkTrainer:
             
             if args.incremental_reg_reload and epoch + 1 < num_train_epochs:
                 train_dataset_group.incremental_reg_load(True)
-                if cache_latents:
-                    vae.to(accelerator.device, dtype=vae_dtype)
-                    vae.requires_grad_(False)
-                    vae.eval()
-                    with torch.no_grad():
-                        train_dataset_group.cache_latents(vae, args.vae_batch_size, args.cache_latents_to_disk, accelerator.is_main_process)
-                    vae.to("cpu")
-                    clean_memory_on_device(accelerator.device)
-        
-                    accelerator.wait_for_everyone()
-
-            # 必要ならテキストエンコーダーの出力をキャッシュする: Text Encoderはcpuまたはgpuへ移される
-            # cache text encoder outputs if needed: Text Encoder is moved to cpu or gpu
-                if args.cache_text_encoder_outputs:
-                    self.cache_text_encoder_outputs_if_needed(
-                        args, accelerator, unet, vae, tokenizers, text_encoders, train_dataset_group, weight_dtype
-                    )
+                
             # end of epoch
 
         # metadata["ss_epoch"] = str(num_train_epochs)
