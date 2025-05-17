@@ -263,25 +263,6 @@ class NetworkTrainer:
 
             accelerator.print(f"all weights merged: {', '.join(args.base_weights)}")
 
-        # 学習を準備する
-        if not args.incremental_reg_reload:
-            if cache_latents: # Skip caching here if incremental reg reload as will be caching at start of epoch
-                vae.to(accelerator.device, dtype=vae_dtype)
-                vae.requires_grad_(False)
-                vae.eval()
-                with torch.no_grad():
-                    train_dataset_group.cache_latents(vae, args.vae_batch_size, args.cache_latents_to_disk, accelerator.is_main_process)
-                vae.to("cpu")
-                clean_memory_on_device(accelerator.device)
-    
-                accelerator.wait_for_everyone()
-    
-            # 必要ならテキストエンコーダーの出力をキャッシュする: Text Encoderはcpuまたはgpuへ移される
-            # cache text encoder outputs if needed: Text Encoder is moved to cpu or gpu
-            if args.cache_text_encoder_outputs:
-                self.cache_text_encoder_outputs_if_needed(
-                    args, accelerator, unet, vae, tokenizers, text_encoders, train_dataset_group, weight_dtype
-                )
 
         # prepare network
         net_kwargs = {}
@@ -827,7 +808,6 @@ class NetworkTrainer:
                 initial_step = 0  # do not skip
 
         global_step = 0
-
         noise_scheduler = DDPMScheduler(
             beta_start=0.00085, beta_end=0.012, beta_schedule="scaled_linear", num_train_timesteps=1000, clip_sample=False
         )
@@ -878,7 +858,26 @@ class NetworkTrainer:
             if os.path.exists(old_ckpt_file):
                 accelerator.print(f"removing old checkpoint: {old_ckpt_file}")
                 os.remove(old_ckpt_file)
-
+        
+        # 学習を準備する
+        if not args.incremental_reg_reload:
+            if cache_latents: # Skip caching here if incremental reg reload as will be caching at start of epoch
+                vae.to(accelerator.device, dtype=vae_dtype)
+                vae.requires_grad_(False)
+                vae.eval()
+                with torch.no_grad():
+                    train_dataset_group.cache_latents(vae, args.vae_batch_size, args.cache_latents_to_disk, accelerator.is_main_process)
+                vae.to("cpu")
+                clean_memory_on_device(accelerator.device)
+    
+                accelerator.wait_for_everyone()
+    
+            # 必要ならテキストエンコーダーの出力をキャッシュする: Text Encoderはcpuまたはgpuへ移される
+            # cache text encoder outputs if needed: Text Encoder is moved to cpu or gpu
+            if args.cache_text_encoder_outputs:
+                self.cache_text_encoder_outputs_if_needed(
+                    args, accelerator, unet, vae, tokenizers, text_encoders, train_dataset_group, weight_dtype
+                )
         # For --sample_at_first
         self.sample_images(accelerator, args, 0, global_step, accelerator.device, vae, tokenizer, text_encoder, unet)
 
@@ -888,7 +887,10 @@ class NetworkTrainer:
                 logger.info(f"skipping epoch {skip_epoch+1} because initial_step (multiplied) is {initial_step}")
                 initial_step -= len(train_dataloader)
             global_step = initial_step
-
+            train_dataloader.set_epoch(epoch_to_start)
+            skipped_dataloader = accelerator.skip_first_batches(train_dataloader, initial_step - 1)
+            initial_step = 1
+            train_dataloader = skipped_dataloader
         for epoch in range(epoch_to_start, num_train_epochs):
             accelerator.print(f"\nepoch {epoch+1}/{num_train_epochs}")
             current_epoch.value = epoch + 1
@@ -915,12 +917,7 @@ class NetworkTrainer:
 
             accelerator.unwrap_model(network).on_epoch_start(text_encoder, unet)
 
-            skipped_dataloader = None
-            if initial_step > 0:
-                skipped_dataloader = accelerator.skip_first_batches(train_dataloader, initial_step - 1)
-                initial_step = 1
-
-            for step, batch in enumerate(skipped_dataloader or train_dataloader):
+            for step, batch in enumerate(train_dataloader):
                 current_step.value = global_step
                 if initial_step > 0:
                     initial_step -= 1
