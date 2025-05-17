@@ -882,12 +882,12 @@ class NetworkTrainer:
         self.sample_images(accelerator, args, 0, global_step, accelerator.device, vae, tokenizer, text_encoder, unet)
 
         # training loop
+        train_dataloader.set_epoch(epoch_to_start)
         if initial_step > 0:  # only if skip_until_initial_step is specified
             for skip_epoch in range(epoch_to_start):  # skip epochs
                 logger.info(f"skipping epoch {skip_epoch+1} because initial_step (multiplied) is {initial_step}")
                 initial_step -= len(train_dataloader)
             global_step = initial_step
-            train_dataloader.set_epoch(epoch_to_start)
             skipped_dataloader = accelerator.skip_first_batches(train_dataloader, initial_step - 1)
             initial_step = 1
             train_dataloader = skipped_dataloader
