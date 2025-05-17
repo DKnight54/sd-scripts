@@ -892,8 +892,7 @@ class NetworkTrainer:
             if args.incremental_reg_reload:
                 
                 # Exhaust dataloader to reload skipped reg images correctly
-                skipped_dataloader = accelerator.skip_first_batches(train_dataloader, len(train_dataloader) - 1)
-                for step, batch in enumerate(skipped_dataloader):
+                for step, batch in enumerate(train_dataloader):
                     accelerator.print(f"skipping step {step}")
                     continue
                 
