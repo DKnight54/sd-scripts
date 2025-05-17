@@ -643,7 +643,6 @@ class BaseDataset(torch.utils.data.Dataset):
         self.current_step: int = 0
         self.max_train_steps: int = 0
         self.seed: int = 0
-        self.reload_reg: bool = False
 
         # augmentation
         self.aug_helper = AugHelper()
@@ -688,9 +687,6 @@ class BaseDataset(torch.utils.data.Dataset):
 
     def set_seed(self, seed):
         self.seed = seed
-        
-    def set_reg_reload(self, reload_reg):
-        self.reload_reg = reload_reg
 
     def incremental_reg_load(self, make_bucket = False): # Placeholder method, does nothing unless overridden in subclasses.
         return
@@ -705,16 +701,11 @@ class BaseDataset(torch.utils.data.Dataset):
                 num_epochs = epoch - self.current_epoch
                 for _ in range(num_epochs):
                     self.current_epoch += 1
-                    if self.reload_reg:
-                        self.incremental_reg_load()
                     self.shuffle_buckets()
                 # self.current_epoch seem to be set to 0 again in the next epoch. it may be caused by skipped_dataloader?
             else:
                 logger.warning("epoch is not incremented. current_epoch: {}, epoch: {}".format(self.current_epoch, epoch))
                 self.current_epoch = epoch
-
-    def set_epoch(self, epoch):
-        self.set_current_epoch(epoch)
         
     def set_current_step(self, step):
         self.current_step = step
@@ -2289,10 +2280,6 @@ class DatasetGroup(torch.utils.data.ConcatDataset):
         for dataset in self.datasets:
             dataset.set_caching_mode(caching_mode)
 
-    def set_reg_reload(self, reg_reload):
-        for dataset in self.datasets:
-            dataset.set_reg_reload(reg_reload)
-
     def verify_bucket_reso_steps(self, min_steps: int):
         for dataset in self.datasets:
             dataset.verify_bucket_reso_steps(min_steps)
@@ -2306,9 +2293,6 @@ class DatasetGroup(torch.utils.data.ConcatDataset):
     def set_current_epoch(self, epoch):
         for dataset in self.datasets:
             dataset.set_current_epoch(epoch)
-
-    def set_epoch(self, epoch):
-        self.set_current_epoch(epoch)
 
     def set_current_step(self, step):
         for dataset in self.datasets:
