@@ -885,8 +885,10 @@ class NetworkTrainer:
                 os.remove(old_ckpt_file)
 
         # For --sample_at_first
-        if args.sample_at_first:
-            self.sample_images(accelerator, args, 0, 0, accelerator.device, vae, tokenizer, text_encoder, unet)
+        if args.sample_at_first is not None:
+            if args.sample_at_first == True:
+                logger.info("Whut?")
+                self.sample_images(accelerator, args, 0, 0, accelerator.device, vae, tokenizer, text_encoder, unet)
 
         # training loop
         if initial_step > 0:  # only if skip_until_initial_step is specified
@@ -904,6 +906,7 @@ class NetworkTrainer:
                     train_dataset_group.incremental_reg_load()
             if args.incremental_reg_reload:
                 train_dataset_group.make_buckets()
+                train_dataloader = accelerator.skip_first_batches(train_dataloader, 0)
            
             
         
