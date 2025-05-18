@@ -1804,19 +1804,19 @@ class DreamBoothDataset(BaseDataset):
         temp_reg_infos = copy.deepcopy(self.reg_infos)
         n = 0
         first_loop = True
-        #reg_img_log = f"\nDataset seed: {self.seed}"
+        reg_img_log = f"\nDataset seed: {self.seed}"
         while n < self.num_train_images :
             for info, subset in temp_reg_infos:
                 if info.image_key in self.image_data:
                     info.num_repeats += 1  # rewrite registered info
                 else:
                     self.register_image(info, subset)
-        #        reg_img_log += f"\nRegistering image: {info.absolute_path}, count: {info.num_repeats}"
+                reg_img_log += f"\nRegistering image: {info.absolute_path}, count: {info.num_repeats}"
                 n += 1
                 if n >= self.num_train_images:
                     break
             random.shuffle(temp_reg_infos)
-        #logger.debug(reg_img_log)
+        logger.debug(reg_img_log)
         if make_bucket:
             self.make_buckets()
         del temp_reg_infos
