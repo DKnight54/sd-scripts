@@ -906,9 +906,7 @@ class NetworkTrainer:
                     train_dataset_group.incremental_reg_load()
             if args.incremental_reg_reload:
                 train_dataset_group.make_buckets()
-                train_dataloader = accelerator.skip_first_batches(train_dataloader, 0)
            
-            
         
         for epoch in range(epoch_to_start, num_train_epochs):
             accelerator.print(f"\nepoch {epoch+1}/{num_train_epochs}")
