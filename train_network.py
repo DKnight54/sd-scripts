@@ -8,6 +8,7 @@ import time
 import json
 from multiprocessing import Value
 import toml
+import copy
 
 from tqdm import tqdm
 
