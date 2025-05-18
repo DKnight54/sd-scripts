@@ -885,7 +885,7 @@ class NetworkTrainer:
 
         # For --sample_at_first
         if args.sample_at_first:
-            self.sample_images(accelerator, args, 0, global_step, accelerator.device, vae, tokenizer, text_encoder, unet)
+            self.sample_images(accelerator, args, 0, 0, accelerator.device, vae, tokenizer, text_encoder, unet)
 
         # training loop
         if initial_step > 0:  # only if skip_until_initial_step is specified
