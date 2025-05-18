@@ -925,6 +925,10 @@ class NetworkTrainer:
                     clean_memory_on_device(accelerator.device)
         
                     accelerator.wait_for_everyone()
+                else:
+                    vae.requires_grad_(False)
+                    vae.eval()
+                    vae.to(accelerator.device, dtype=vae_dtype)
 
             # 必要ならテキストエンコーダーの出力をキャッシュする: Text Encoderはcpuまたはgpuへ移される
             # cache text encoder outputs if needed: Text Encoder is moved to cpu or gpu
