@@ -905,16 +905,9 @@ class NetworkTrainer:
                     train_dataset_group.incremental_reg_load()
             if args.incremental_reg_reload:
                 train_dataset_group.make_buckets()
-            del train_dataloader
-            train_dataloader = torch.utils.data.DataLoader(
-                train_dataset_group,
-                batch_size=1,
-                shuffle=True,
-                collate_fn=collator,
-                num_workers=n_workers,
-                persistent_workers=args.persistent_data_loader_workers,
-            )
-            train_dataloader = accelerator.prepare(train_dataloader)
+            skipped_dataloader = accelerator.skip_first_batches(train_dataloader, len(train_dataloader))
+            skipped_dataloader = None
+            
             
         
         for epoch in range(epoch_to_start, num_train_epochs):
