@@ -891,11 +891,13 @@ class NetworkTrainer:
         # training loop
         if initial_step > 0:  # only if skip_until_initial_step is specified
             if args.incremental_reg_reload:
+                '''
                 logger.info("Clearing existing data...")
                 # Exhaust dataloader to reload skipped reg images correctly
                 for step, batch in enumerate(tqdm(train_dataloader)):
                     continue
                 logger.info("Done clearing existing data")
+                '''
             for skip_epoch in range(epoch_to_start):  # skip epochs
                 logger.info(f"skipping epoch {skip_epoch+1} because initial_step (multiplied) is {initial_step}")
                 initial_step -= len(train_dataloader)
@@ -903,6 +905,17 @@ class NetworkTrainer:
                     train_dataset_group.incremental_reg_load()
             if args.incremental_reg_reload:
                 train_dataset_group.make_buckets()
+            del train_dataloader
+            train_dataloader = torch.utils.data.DataLoader(
+                train_dataset_group,
+                batch_size=1,
+                shuffle=True,
+                collate_fn=collator,
+                num_workers=n_workers,
+                persistent_workers=args.persistent_data_loader_workers,
+            )
+            train_dataloader = accelerator.prepare(train_dataloader)
+            
         
         for epoch in range(epoch_to_start, num_train_epochs):
             accelerator.print(f"\nepoch {epoch+1}/{num_train_epochs}")
