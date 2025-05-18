@@ -935,7 +935,8 @@ class NetworkTrainer:
             if initial_step > 0:
                 skipped_dataloader = accelerator.skip_first_batches(train_dataloader, initial_step - 1)
                 initial_step = 1
-            progress_bar = tqdm(range(math.ceil(len(train_dataloader) / args.gradient_accumulation_steps)), smoothing=0, disable=not accelerator.is_local_main_process, desc="steps")
+            progress_bar = tqdm(range(math.ceil(len(skipped_dataloader or train_dataloader) / args.gradient_accumulation_steps)), smoothing=0, disable=not accelerator.is_local_main_process, desc="steps")
+            log.infp(f"Process: {accelerator.state.local_process_index + 1 }/{accelerator.state.num_processes} Length of Dataloader: {len(skipped_dataloader or train_dataloader)}"
             for step, batch in enumerate(skipped_dataloader or train_dataloader):
                 current_step.value = global_step
                 if initial_step > 0:
