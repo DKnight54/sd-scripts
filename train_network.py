@@ -936,7 +936,7 @@ class NetworkTrainer:
                     initial_step -= 1
                     continue
 
-                with accelerator.accumulate(training_model):
+                with accelerator.accumulate(skipped_dataloader or training_model):
                     on_step_start(text_encoder, unet)
 
                     if "latents" in batch and batch["latents"] is not None:
