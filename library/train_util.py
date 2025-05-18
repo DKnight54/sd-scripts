@@ -1803,7 +1803,7 @@ class DreamBoothDataset(BaseDataset):
             if first_loop and self.reg_infos_index == start_index:
                 first_loop = False
             reg_img_log += f"\nRegistering image: {info.absolute_path}, count: {info.num_repeats}"
-        logger.info(reg_img_log)    
+        logger.debug(reg_img_log)    
         del temp_reg_infos
         if make_bucket:
             self.make_buckets()
