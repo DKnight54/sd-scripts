@@ -1816,7 +1816,7 @@ class DreamBoothDataset(BaseDataset):
                 if n >= self.num_train_images:
                     break
             random.shuffle(temp_reg_infos)
-        logger.info(reg_img_log)
+        logger.debug(reg_img_log)
         if make_bucket:
             self.make_buckets()
         del temp_reg_infos
