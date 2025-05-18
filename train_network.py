@@ -966,7 +966,7 @@ class NetworkTrainer:
                             accelerator.print("NaN found in latents, replacing with zeros")
                             latents = torch.nan_to_num(latents, 0, out=latents)
                     latents = latents * self.vae_scale_factor
-                    example_tuple = tuple(copy.deepcopy([latents, batch["captions"]]))
+                    example_tuple = (latents, batch["captions"])
                     # get multiplier for each sample
                     if network_has_multiplier:
                         multipliers = batch["network_multipliers"]
@@ -1133,7 +1133,7 @@ class NetworkTrainer:
             if args.sample_every_n_epochs is not None and (epoch + 1)% args.sample_every_n_epochs == 0:
                 accelerator.wait_for_everyone()
                 self.sample_images(accelerator, args, epoch + 1, global_step, accelerator.device, vae, tokenizer, text_encoder, unet, example_tuple)
-            del example_tuple
+
             if args.incremental_reg_reload and epoch + 1 < num_train_epochs:
                 train_dataset_group.incremental_reg_load(True)
                 
