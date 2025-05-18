@@ -279,9 +279,9 @@ class NetworkTrainer:
     
             # 必要ならテキストエンコーダーの出力をキャッシュする: Text Encoderはcpuまたはgpuへ移される
             # cache text encoder outputs if needed: Text Encoder is moved to cpu or gpu
-            self.cache_text_encoder_outputs_if_needed(
-                args, accelerator, unet, vae, tokenizers, text_encoders, train_dataset_group, weight_dtype
-            )
+        self.cache_text_encoder_outputs_if_needed(
+            args, accelerator, unet, vae, tokenizers, text_encoders, train_dataset_group, weight_dtype
+        )
 
         # prepare network
         net_kwargs = {}
