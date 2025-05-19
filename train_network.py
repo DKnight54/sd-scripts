@@ -916,6 +916,7 @@ class NetworkTrainer:
                     num_workers=n_workers,
                     persistent_workers=args.persistent_data_loader_workers,
                 )
+                train_dataloader = accelerator.prepare(train_dataloader)
          
         
         for epoch in range(epoch_to_start, num_train_epochs):
