@@ -952,7 +952,10 @@ class NetworkTrainer:
 
                 with accelerator.accumulate(training_model):
                     on_step_start(text_encoder, unet)
-
+                    if "latents" in batch:
+                        logger.info('"latents" in batch')
+                        if batch["latents"] is not None:
+                            logger.info('batch["latents"] is not None')
                     if "latents" in batch and batch["latents"] is not None:
                         latents = batch["latents"].to(accelerator.device).to(dtype=weight_dtype)
                     else:
