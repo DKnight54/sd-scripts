@@ -889,13 +889,13 @@ class NetworkTrainer:
         # training loop
         if initial_step > 0:  # only if skip_until_initial_step is specified
             if args.incremental_reg_reload:
-                '''
+                
                 logger.info("Clearing existing data...")
                 # Exhaust dataloader to reload skipped reg images correctly
                 for step, batch in enumerate(tqdm(train_dataloader)):
                     continue
                 logger.info("Done clearing existing data")
-                '''
+                
             for skip_epoch in range(epoch_to_start):  # skip epochs
                 logger.info(f"skipping epoch {skip_epoch+1} because initial_step (multiplied) is {initial_step}")
                 initial_step -= len(train_dataloader)
@@ -903,6 +903,8 @@ class NetworkTrainer:
                     train_dataset_group.incremental_reg_load()
             if args.incremental_reg_reload:
                 train_dataset_group.make_buckets()
+                '''
+                # Unable to reintialize dataloader without exhausting data
                 del train_dataloader
                 ds_for_collator = train_dataset_group if args.max_data_loader_n_workers == 0 else None
                 current_epoch.value = epoch_to_start
@@ -917,6 +919,7 @@ class NetworkTrainer:
                     persistent_workers=args.persistent_data_loader_workers,
                 )
                 train_dataloader = accelerator.prepare(train_dataloader)
+                '''
          
         
         for epoch in range(epoch_to_start, num_train_epochs):
