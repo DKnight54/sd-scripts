@@ -1057,17 +1057,23 @@ class BaseDataset(torch.utils.data.Dataset):
         batch: List[ImageInfo] = []
         current_condition = None
 
+        check_counter = 0
         logger.info("checking cache validity...")
         for info in tqdm(image_infos):
-            info.latent_cache_checked = True
+            
             subset = self.image_to_subset[info.image_key]
 
             if info.latents_npz is not None:  # fine tuning dataset
+                info.latent_cache_checked = True
                 continue
 
             # check disk cache exists and size of latents
             if cache_to_disk:
                 info.latents_npz = os.path.splitext(info.absolute_path)[0] + ".npz"
+                info.latent_cache_checked = True
+                if check_counter < 5:
+                    check_counter += 1
+                    logger.info(f'{info.latents_npz}')
                 if not is_main_process:  # store to info only
                     continue
 
@@ -1811,7 +1817,8 @@ class DreamBoothDataset(BaseDataset):
                     info.num_repeats += 1  # rewrite registered info
                 else:
                     self.register_image(info, subset)
-                reg_img_log += f"\nRegistering image: {info.absolute_path}, count: {info.num_repeats}"
+                if n < 5:
+                    reg_img_log += f"\nRegistering image: {info.absolute_path}, count: {info.num_repeats}"
                 n += 1
                 if n >= self.num_train_images:
                     break
