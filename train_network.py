@@ -818,8 +818,7 @@ class NetworkTrainer:
                     )
                 if args.resume_from_epoch and epoch_from_state is not None:
                     epoch_to_start = epoch_from_state
-                    initial_step = (epoch_to_start - 1) * len(train_dataloader)
-                    ) #Skips only epochs
+                    initial_step = (epoch_to_start - 1) * len(train_dataloader) #Skips only epochs
                 else:
                     logger.info(f"skipping {initial_step} steps / {initial_step}ステップをスキップします")
                     initial_step *= args.gradient_accumulation_steps
