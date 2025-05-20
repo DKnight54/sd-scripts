@@ -1780,7 +1780,7 @@ class DreamBoothDataset(BaseDataset):
             logger.warning("some of reg images are not used / 正則化画像の数が多いので、一部使用されない正則化画像があります")
         reg_img_log = f"\nDataset seed: {self.seed}"
         # Clearing previously loaded reg images from buckets
-        for info, subset in self.reg_infos:
+        for info, subset in self.reg_infos.values():
             if info.image_key in self.image_data:
                 self.image_data.pop(info.image_key, None)
                 self.image_to_subset.pop(info.image_key, None)
@@ -1803,6 +1803,7 @@ class DreamBoothDataset(BaseDataset):
             if first_loop and self.reg_infos_index == start_index:
                 first_loop = False
             reg_img_log += f"\nRegistering image: {info.absolute_path}, count: {info.num_repeats}"
+        logger.info(reg_img_log) 
         logger.debug(reg_img_log)    
         del temp_reg_infos
         if make_bucket:
