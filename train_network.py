@@ -948,7 +948,7 @@ class NetworkTrainer:
             # Moved train_dataloader creation here to create dataloader after finalizing train_dataset_group and caching as necessary.
 
 
-         train_dataloader = accelerator.prepare(train_dataloader)
+        train_dataloader = accelerator.prepare(train_dataloader)
         
         for epoch in range(epoch_to_start, num_train_epochs):
             accelerator.print(f"\nepoch {epoch+1}/{num_train_epochs}")
