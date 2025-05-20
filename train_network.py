@@ -901,7 +901,7 @@ class NetworkTrainer:
             num_workers=n_workers,
             persistent_workers=args.persistent_data_loader_workers,
         )
-        train_dataloader = accelerator.prepare(train_dataloader)
+        
         # training loop
         if initial_step > 0:  # only if skip_until_initial_step is specified
             if args.incremental_reg_reload:
@@ -948,7 +948,7 @@ class NetworkTrainer:
             # Moved train_dataloader creation here to create dataloader after finalizing train_dataset_group and caching as necessary.
 
 
-         
+         train_dataloader = accelerator.prepare(train_dataloader)
         
         for epoch in range(epoch_to_start, num_train_epochs):
             accelerator.print(f"\nepoch {epoch+1}/{num_train_epochs}")
