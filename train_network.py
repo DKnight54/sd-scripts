@@ -883,11 +883,12 @@ class NetworkTrainer:
 
         if initial_step > 0:  # only if skip_until_initial_step is specified
             if args.incremental_reg_reload:
+                logger.info("Clearing existing data...")
                 # Exhaust dataloader to reload skipped reg images correctly
-                skipped_dataloader = accelerator.skip_first_batches(train_dataloader, len(train_dataloader) - 1)
-                for step, batch in enumerate(skipped_dataloader):
-                    accelerator.print(f"skipping step {step}")
+                for step, batch in enumerate(tqdm(train_dataloader)):
                     continue
+                logger.info("Done clearing existing data")
+
             for skip_epoch in range(epoch_to_start):  # skip epochs
                 logger.info(f"skipping epoch {skip_epoch+1} because initial_step (multiplied) is {initial_step}")
                 initial_step -= len(train_dataloader)
