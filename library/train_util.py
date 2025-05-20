@@ -656,6 +656,8 @@ class BaseDataset(torch.utils.data.Dataset):
 
         # caching
         self.caching_mode = None  # None, 'latents', 'text'
+        self.reg_infos = None
+        self.reg_infos_index = None
 
     def adjust_min_max_bucket_reso_by_steps(
         self, resolution: Tuple[int, int], min_bucket_reso: int, max_bucket_reso: int, bucket_reso_steps: int
@@ -1065,12 +1067,17 @@ class BaseDataset(torch.utils.data.Dataset):
 
             if info.latents_npz is not None:  # fine tuning dataset
                 info.latent_cache_checked = True
+                if self.reg_infos is not None and info.image_key in self.reg_infos:
+                    self.reg_infos[info.image_key][0].latent_cache_checked = True
                 continue
 
             # check disk cache exists and size of latents
             if cache_to_disk:
                 info.latents_npz = os.path.splitext(info.absolute_path)[0] + ".npz"
                 info.latent_cache_checked = True
+                if self.reg_infos is not None and info.image_key in self.reg_infos:
+                    self.reg_infos[info.image_key][0].latent_cache_checked = True
+                    self.reg_infos[info.image_key][0].latents_npz = info.latents_npz
                 if check_counter < 5:
                     check_counter += 1
                     logger.info(f'{info.latents_npz}')
@@ -1109,7 +1116,17 @@ class BaseDataset(torch.utils.data.Dataset):
         logger.info("caching latents...")
         for condition, batch in tqdm(batches, smoothing=1, total=len(batches)):
             cache_batch_latents(vae, cache_to_disk, batch, condition.flip_aug, condition.alpha_mask, condition.random_crop)
+            if self.reg_infos is not None:
+                for info in batches:
+                    if info.image_key in self.reg_infos:
+                        self.reg_infos[info.image_key][0].latents_npz = info.latents_npz
+                        self.reg_infos[info.image_key][0].latents_original_size = info.latents_original_size
+                        self.reg_infos[info.image_key][0].latents_crop_ltrb = info.latents_crop_ltrb
+                        self.reg_infos[info.image_key][0].latents_crop_ltrb = info.latents_flipped
+                        self.reg_infos[info.image_key][0].latents = info.latents
+                        self.reg_infos[info.image_key][0].alpha_mask = info.alpha_mask
 
+    
     # weight_dtypeを指定するとText Encoderそのもの、およひ出力がweight_dtypeになる
     # SDXLでのみ有効だが、datasetのメソッドとする必要があるので、sdxl_train_util.pyではなくこちらに実装する
     # SD1/2に対応するにはv2のフラグを持つ必要があるので後回し
@@ -1578,7 +1595,8 @@ class DreamBoothDataset(BaseDataset):
         self.size = min(self.width, self.height)  # 短いほう
         self.prior_loss_weight = prior_loss_weight
         self.latents_cache = None
-        self.reg_infos: List[Tuple[ImageInfo, DreamBoothSubset]] = []
+        self.reg_infos: Dict[str, Tuple[ImageInfo, DreamBoothSubset]] = {}
+        self.reg_infos_index: List[str] = []
 
         self.enable_bucket = enable_bucket
         if self.enable_bucket:
@@ -1739,8 +1757,9 @@ class DreamBoothDataset(BaseDataset):
                 if subset.is_reg:
                     if subset.num_repeats > 1:
                         info.num_repeats = 1
+                    self.reg_infos[info.image_key] = (info, subset)
                     for i in range(subset.num_repeats):
-                        self.reg_infos.append((info, subset))
+                        self.reg_infos_index.append(info.image_key)
                 else:
                     self.register_image(info, subset)
 
@@ -1778,6 +1797,7 @@ class DreamBoothDataset(BaseDataset):
             del temp_reg_infos
         '''
         self.num_reg_images = num_reg_images
+        random.shuffle(self.reg_infos_index)
         #self.subset_loaded_count()
 
     def subset_loaded_count(self):
@@ -1801,18 +1821,19 @@ class DreamBoothDataset(BaseDataset):
         if self.num_train_images < self.num_reg_images:
             logger.warning("some of reg images are not used / 正則化画像の数が多いので、一部使用されない正則化画像があります")    
         logger.info(f"Forcing random reload of reg images.")
-        for info, subset in self.reg_infos:
+        for info, subset in self.reg_infos.values():
             if info.image_key in self.image_data:
                 self.image_data.pop(info.image_key, None)
                 self.image_to_subset.pop(info.image_key, None)
             
-        random.shuffle(self.reg_infos)
+        
         temp_reg_infos = copy.deepcopy(self.reg_infos)
         n = 0
         first_loop = True
         reg_img_log = f"\nDataset seed: {self.seed}"
         while n < self.num_train_images :
-            for info, subset in temp_reg_infos:
+            for reg_key in self.reg_infos_index:
+                info, subset =  temp_reg_infos[reg_key]
                 if info.image_key in self.image_data:
                     info.num_repeats += 1  # rewrite registered info
                 else:
@@ -1822,7 +1843,7 @@ class DreamBoothDataset(BaseDataset):
                 n += 1
                 if n >= self.num_train_images:
                     break
-            random.shuffle(temp_reg_infos)
+            random.shuffle(self.reg_infos_index)
         logger.info(reg_img_log)
         if make_bucket:
             self.make_buckets()
