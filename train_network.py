@@ -973,10 +973,6 @@ class NetworkTrainer:
 
                 with accelerator.accumulate(training_model):
                     on_step_start(text_encoder, unet)
-                    if "latents" in batch:
-                        logger.info('"latents" in batch')
-                        if batch["latents"] is not None:
-                            logger.info('batch["latents"] is not None')
                     if "latents" in batch and batch["latents"] is not None:
                         latents = batch["latents"].to(accelerator.device).to(dtype=weight_dtype)
                     else:
@@ -997,7 +993,7 @@ class NetworkTrainer:
                             accelerator.print("NaN found in latents, replacing with zeros")
                             latents = torch.nan_to_num(latents, 0, out=latents)
                     latents = latents * self.vae_scale_factor
-                    example_tuple = (latents, batch["captions"])
+                    
                     # get multiplier for each sample
                     if network_has_multiplier:
                         multipliers = batch["network_multipliers"]
@@ -1103,6 +1099,7 @@ class NetworkTrainer:
                     progress_bar.update(1)
                     global_step += 1
                     if args.sample_every_n_steps is not None and global_step % args.sample_every_n_steps == 0:
+                        example_tuple = (latents.detach().clone(), batch["captions"])
                         accelerator.wait_for_everyone()
                         self.sample_images(accelerator, args, None, global_step, accelerator.device, vae, tokenizer, text_encoder, unet, example_tuple)
 
@@ -1162,8 +1159,10 @@ class NetworkTrainer:
                         train_util.save_and_remove_state_on_epoch_end(args, accelerator, epoch + 1)
 
             if args.sample_every_n_epochs is not None and (epoch + 1)% args.sample_every_n_epochs == 0:
+                example_tuple = (latents.detach().clone(), batch["captions"])
                 accelerator.wait_for_everyone()
                 self.sample_images(accelerator, args, epoch + 1, global_step, accelerator.device, vae, tokenizer, text_encoder, unet, example_tuple)
+                
 
             # Reloading reg images here and checking cache before train_dataloader's workers are reinitialized
             if args.incremental_reg_reload and epoch + 1 < num_train_epochs:
