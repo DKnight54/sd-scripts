@@ -872,21 +872,9 @@ class NetworkTrainer:
             self.sample_images(accelerator, args, 0, 0, accelerator.device, vae, tokenizer, text_encoder, unet)
         if args.incremental_reg_reload:
             train_dataset_group.set_reg_reload(True)
+            logger.warning("incremental_reg_reload = True. Incremental reloading of Regularization Images requires persistent_data_loader_workers = false, overriding.")
+            args.persistent_data_loader_workers = False
         
-        ds_for_collator = train_dataset_group if args.max_data_loader_n_workers == 0 else None
-        #current_epoch.value = epoch_to_start
-        #current_step.value = global_step
-        collator = train_util.collator_class(current_epoch, current_step, ds_for_collator)
-        train_dataloader = torch.utils.data.DataLoader(
-            train_dataset_group,
-            batch_size=1,
-            shuffle=True,
-            collate_fn=collator,
-            num_workers=n_workers,
-            persistent_workers=args.persistent_data_loader_workers,
-        )
-
-        train_dataloader = accelerator.prepare(train_dataloader)
         # training loop
         if initial_step > 0:  # only if skip_until_initial_step is specified
             
@@ -926,7 +914,19 @@ class NetworkTrainer:
       
 
             # Moved train_dataloader creation here to create dataloader after finalizing train_dataset_group and caching as necessary.
-       
+        ds_for_collator = train_dataset_group if args.max_data_loader_n_workers == 0 else None
+        #current_epoch.value = epoch_to_start
+        #current_step.value = global_step
+        collator = train_util.collator_class(current_epoch, current_step, ds_for_collator)
+        train_dataloader = torch.utils.data.DataLoader(
+            train_dataset_group,
+            batch_size=1,
+            shuffle=True,
+            collate_fn=collator,
+            num_workers=n_workers,
+            persistent_workers=args.persistent_data_loader_workers,
+        )
+        train_dataloader = accelerator.prepare(train_dataloader)
         for epoch in range(epoch_to_start, num_train_epochs):
             accelerator.print(f"\nepoch {epoch+1}/{num_train_epochs}")
             current_epoch.value = epoch + 1
@@ -941,7 +941,7 @@ class NetworkTrainer:
                 skipped_dataloader = accelerator.skip_first_batches(train_dataloader, initial_step - 1)
                 initial_step = 1
             progress_bar = tqdm(range(math.ceil(len(skipped_dataloader or train_dataloader) / args.gradient_accumulation_steps)), smoothing=0, disable=not accelerator.is_local_main_process, desc="steps")
-            logger.info(f"Process: {accelerator.state.local_process_index + 1 }/{accelerator.state.num_processes} Length of Dataloader: {len(skipped_dataloader or train_dataloader)}")
+            logger.info(f"\nProcess: {accelerator.state.local_process_index + 1 }/{accelerator.state.num_processes}\nLength of Dataloader: {len(skipped_dataloader or train_dataloader)}\nLength of train_dataset_group: {len(train_dataset_group)}")
             for step, batch in enumerate(skipped_dataloader or train_dataloader):
                 current_step.value = global_step
                 if initial_step > 0:
@@ -1165,7 +1165,7 @@ class NetworkTrainer:
                     self.cache_text_encoder_outputs_if_needed(
                         args, accelerator, unet, vae, tokenizers, text_encoders, train_dataset_group, weight_dtype
                     )  
-                '''
+
                 collator = train_util.collator_class(current_epoch, current_step, ds_for_collator)
                 train_dataloader = torch.utils.data.DataLoader(
                     train_dataset_group,
@@ -1177,7 +1177,7 @@ class NetworkTrainer:
                 )
         
                 train_dataloader = accelerator.prepare(train_dataloader)
-                '''
+
             # end of epoch
 
         # metadata["ss_epoch"] = str(num_train_epochs)
