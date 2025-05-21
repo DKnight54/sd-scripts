@@ -873,8 +873,8 @@ class NetworkTrainer:
         if args.incremental_reg_reload:
             train_dataset_group.set_reg_reload(True)
         ds_for_collator = train_dataset_group if args.max_data_loader_n_workers == 0 else None
-        current_epoch.value = epoch_to_start
-        current_step.value = global_step
+        #current_epoch.value = epoch_to_start
+        #current_step.value = global_step
         collator = train_util.collator_class(current_epoch, current_step, ds_for_collator)
         train_dataloader = torch.utils.data.DataLoader(
             train_dataset_group,
