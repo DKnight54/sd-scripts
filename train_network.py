@@ -888,7 +888,7 @@ class NetworkTrainer:
             for skip_epoch in range(epoch_to_start):  # skip epochs
                 logger.info(f"skipping epoch {skip_epoch+1} because initial_step (multiplied) is {initial_step}")
                 # current_epoch.value = skip_epoch+1
-                train_dataset_group.incremental_reg_reload(False)
+                train_dataset_group.incremental_reg_load(False)
                 initial_step -= num_of_steps
             train_dataset_group.make_buckets()
 
