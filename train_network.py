@@ -872,32 +872,23 @@ class NetworkTrainer:
             self.sample_images(accelerator, args, 0, 0, accelerator.device, vae, tokenizer, text_encoder, unet)
         if args.incremental_reg_reload:
             train_dataset_group.set_reg_reload(True)
-        ds_for_collator = train_dataset_group if args.max_data_loader_n_workers == 0 else None
-        #current_epoch.value = epoch_to_start
-        #current_step.value = global_step
-        collator = train_util.collator_class(current_epoch, current_step, ds_for_collator)
-        train_dataloader = torch.utils.data.DataLoader(
-            train_dataset_group,
-            batch_size=1,
-            shuffle=True,
-            collate_fn=collator,
-            num_workers=n_workers,
-            persistent_workers=args.persistent_data_loader_workers,
-        )
-        
+       
         # training loop
         if initial_step > 0:  # only if skip_until_initial_step is specified
             
             if args.incremental_reg_reload:
+                '''
 
                 logger.info("Clearing existing data...")
                 # Exhaust dataloader to reload skipped reg images correctly
                 for step, batch in enumerate(tqdm(train_dataloader)):
                     continue
                 logger.info("Done clearing existing data")
-            
+                '''
             for skip_epoch in range(epoch_to_start):  # skip epochs
                 logger.info(f"skipping epoch {skip_epoch+1} because initial_step (multiplied) is {initial_step}")
+                current_epoch.value = skip_epoch+1
+                train_dataset_group.set_current_epoch(skip_epoch+1)
                 initial_step -= num_of_steps
 
             # Start cache latents here if necessary after train_datasetgroup has been finalized for the first run.
@@ -921,7 +912,18 @@ class NetworkTrainer:
       
 
             # Moved train_dataloader creation here to create dataloader after finalizing train_dataset_group and caching as necessary.
-
+        ds_for_collator = train_dataset_group if args.max_data_loader_n_workers == 0 else None
+        #current_epoch.value = epoch_to_start
+        #current_step.value = global_step
+        collator = train_util.collator_class(current_epoch, current_step, ds_for_collator)
+        train_dataloader = torch.utils.data.DataLoader(
+            train_dataset_group,
+            batch_size=1,
+            shuffle=True,
+            collate_fn=collator,
+            num_workers=n_workers,
+            persistent_workers=args.persistent_data_loader_workers,
+        )
 
         train_dataloader = accelerator.prepare(train_dataloader)
         
