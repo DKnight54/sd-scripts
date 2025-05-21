@@ -2338,6 +2338,10 @@ class DatasetGroup(torch.utils.data.ConcatDataset):
         for dataset in self.datasets:
             dataset.add_replacement(str_from, str_to)
 
+    def set_reg_reload(self, reg_reload):
+        for dataset in self.datasets:
+            dataset.reg_reload.value = reg_reload
+
     def make_buckets(self):
         for dataset in self.datasets:
             dataset.make_buckets()
