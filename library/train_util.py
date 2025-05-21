@@ -1011,6 +1011,7 @@ class BaseDataset(torch.utils.data.Dataset):
 
         # データ参照用indexを作る。このindexはdatasetのshuffleに用いられる
         self.buckets_indices: List[BucketBatchIndex] = []
+        self.buckets_indices.clear()
         for bucket_index, bucket in enumerate(self.bucket_manager.buckets):
             batch_count = int(math.ceil(len(bucket) / self.batch_size))
             for batch_index in range(batch_count):
