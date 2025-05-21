@@ -1725,7 +1725,7 @@ class DreamBoothDataset(BaseDataset):
                             captions.append(cap_for_img)
 
             self.set_tag_frequency(os.path.basename(subset.image_dir), captions)  # タグ頻度を記録
-
+            
             if missing_captions:
                 number_of_missing_captions = len(missing_captions)
                 number_of_missing_captions_to_show = 5
@@ -1828,7 +1828,8 @@ class DreamBoothDataset(BaseDataset):
             del temp_reg_infos
         '''
         self.num_reg_images = num_reg_images
-        random.shuffle(self.reg_infos_index)
+        #random.shuffle(self.reg_infos_index)
+        self.temp_index=0
         #self.subset_loaded_count()
 
     def subset_loaded_count(self):
@@ -1861,10 +1862,29 @@ class DreamBoothDataset(BaseDataset):
         temp_reg_infos = copy.deepcopy(self.reg_infos)
         n = 0
         first_loop = True
+        logger.info(f"self.reg_infos_index at: {self.temp_index}\n reg_infos_index len = {len(self.reg_infos_index)}")
         reg_img_log = f"\nDataset seed: {self.seed.value}"
         while n < self.num_train_images :
+            info, subset = temp_reg_infos[self.reg_infos_index[self.temp_index]]
+            if first_loop:
+                self.register_image(info, subset)
+                n += info.num_repeats
+            else:
+                info.num_repeats += 1  # rewrite registered info
+                n += 1
+            self.temp_index += 1
+            if self.temp_index % len(self.reg_infos_index) == 0:
+                self.temp_index = 0
+            if first_loop and self.reg_infos_index == start_index:
+                first_loop = False
+            if n < 5:
+                    reg_img_log += f"\nRegistering image: {info.absolute_path}, count: {info.num_repeats}"
+            
+            '''
             for reg_key in self.reg_infos_index:
                 info, subset =  temp_reg_infos[reg_key]
+
+               
                 if info.image_key in self.image_data:
                     info.num_repeats += 1  # rewrite registered info
                 else:
@@ -1875,6 +1895,7 @@ class DreamBoothDataset(BaseDataset):
                 if n >= self.num_train_images:
                     break
             random.shuffle(self.reg_infos_index)
+            '''
         logger.info(reg_img_log)
         if make_bucket:
             self.make_buckets()
