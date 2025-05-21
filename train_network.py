@@ -887,9 +887,10 @@ class NetworkTrainer:
                 '''
             for skip_epoch in range(epoch_to_start):  # skip epochs
                 logger.info(f"skipping epoch {skip_epoch+1} because initial_step (multiplied) is {initial_step}")
-                current_epoch.value = skip_epoch+1
-                train_dataset_group.set_current_epoch(skip_epoch+1)
+                # current_epoch.value = skip_epoch+1
+                train_dataset_group.incremental_reg_reload(False)
                 initial_step -= num_of_steps
+            train_dataset_group.make_buckets()
 
             # Start cache latents here if necessary after train_datasetgroup has been finalized for the first run.
         if cache_latents:
@@ -1140,7 +1141,7 @@ class NetworkTrainer:
                 accelerator.wait_for_everyone()
                 self.sample_images(accelerator, args, epoch + 1, global_step, accelerator.device, vae, tokenizer, text_encoder, unet, example_tuple)
                 
-            '''
+           
             # Reloading reg images here and checking cache before train_dataloader's workers are reinitialized
             if args.incremental_reg_reload and epoch + 1 < num_train_epochs:
                 train_dataset_group.incremental_reg_load(True)
@@ -1164,8 +1165,19 @@ class NetworkTrainer:
                 if args.cache_text_encoder_outputs:
                     self.cache_text_encoder_outputs_if_needed(
                         args, accelerator, unet, vae, tokenizers, text_encoders, train_dataset_group, weight_dtype
-                    )          
-            '''
+                    )  
+                collator = train_util.collator_class(current_epoch, current_step, ds_for_collator)
+                train_dataloader = torch.utils.data.DataLoader(
+                    train_dataset_group,
+                    batch_size=1,
+                    shuffle=True,
+                    collate_fn=collator,
+                    num_workers=n_workers,
+                    persistent_workers=args.persistent_data_loader_workers,
+                )
+        
+                train_dataloader = accelerator.prepare(train_dataloader)
+            
             # end of epoch
 
         # metadata["ss_epoch"] = str(num_train_epochs)
