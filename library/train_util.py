@@ -31,6 +31,7 @@ from io import BytesIO
 from accelerate.utils import gather_object
 import toml
 import copy
+from multiprocessing import Value
 
 from tqdm import tqdm
 
@@ -642,7 +643,7 @@ class BaseDataset(torch.utils.data.Dataset):
 
         self.current_step: int = 0
         self.max_train_steps: int = 0
-        self.seed: int = 0
+        self.seed = Value("i", 0)
 
         # augmentation
         self.aug_helper = AugHelper()
@@ -658,6 +659,14 @@ class BaseDataset(torch.utils.data.Dataset):
         self.caching_mode = None  # None, 'latents', 'text'
         self.reg_infos = None
         self.reg_infos_index = None
+        self.reg_reload = Value("b", False)
+        self.use_cache_latents = False
+        self.vae = None
+        self.vae_batch_size = 1
+        self.cache_latents_to_disk = False
+        self.accelerator = None
+
+        
 
     def adjust_min_max_bucket_reso_by_steps(
         self, resolution: Tuple[int, int], min_bucket_reso: int, max_bucket_reso: int, bucket_reso_steps: int
@@ -688,7 +697,16 @@ class BaseDataset(torch.utils.data.Dataset):
         return min_bucket_reso, max_bucket_reso
 
     def set_seed(self, seed):
-        self.seed = seed
+        self.seed.value = seed
+        
+    def set_use_cache_latents(self, use_cache):
+        self.use_cache_latents = use_cache
+        
+     def set_accelerator(self, accelerator):   
+        self.accelerator = accelerator
+         
+    def set_reg_reload(self, reg_reload):
+        self.reg_reload.value = reg_reload
 
     def incremental_reg_load(self, make_bucket = False): # Placeholder method, does nothing unless overridden in subclasses.
         return
@@ -703,7 +721,18 @@ class BaseDataset(torch.utils.data.Dataset):
                 num_epochs = epoch - self.current_epoch
                 for _ in range(num_epochs):
                     self.current_epoch += 1
-                    self.shuffle_buckets()
+                    if self.reg_reload.value:
+                        self.incremental_reg_load(make_bucket = True)
+                if self.use_cache_latents and self.reg_reload.value:
+                    vae.to(accelerator.device, dtype=vae_dtype)
+                    vae.requires_grad_(False)
+                    vae.eval()
+                    with torch.no_grad():
+                        cache_latents(self.vae, self.vae_batch_size, self.cache_to_disk, self.accelerator.is_main_process)
+                    
+                    vae.to("cpu")
+                    clean_memory_on_device(accelerator.device)
+                self.shuffle_buckets()
                 # self.current_epoch seem to be set to 0 again in the next epoch. it may be caused by skipped_dataloader?
             else:
                 logger.warning("epoch is not incremented. current_epoch: {}, epoch: {}".format(self.current_epoch, epoch))
@@ -1002,7 +1031,7 @@ class BaseDataset(torch.utils.data.Dataset):
 
     def shuffle_buckets(self):
         # set random seed for this epoch
-        random.seed(self.seed + self.current_epoch)
+        random.seed(self.seed.value + self.current_epoch)
 
         random.shuffle(self.buckets_indices)
         self.bucket_manager.shuffle()
@@ -1032,7 +1061,11 @@ class BaseDataset(torch.utils.data.Dataset):
     def cache_latents(self, vae, vae_batch_size=1, cache_to_disk=False, is_main_process=True):
         # マルチGPUには対応していないので、そちらはtools/cache_latents.pyを使うこと
         logger.info("caching latents.")
-
+        if not self.use_cache_latents:
+            self.vae = vae
+            self.vae_batch_size = vae_batch_size
+            self.cache_latents_to_disk = cache_to_disk
+            self.use_cache_latents = True
         image_infos = list(self.image_data.values())
         image_infos = list(filter(lambda info: info.latent_cache_checked == False, image_infos))
 
@@ -1830,7 +1863,7 @@ class DreamBoothDataset(BaseDataset):
         temp_reg_infos = copy.deepcopy(self.reg_infos)
         n = 0
         first_loop = True
-        reg_img_log = f"\nDataset seed: {self.seed}"
+        reg_img_log = f"\nDataset seed: {self.seed.value}"
         while n < self.num_train_images :
             for reg_key in self.reg_infos_index:
                 info, subset =  temp_reg_infos[reg_key]
