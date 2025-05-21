@@ -266,24 +266,6 @@ class NetworkTrainer:
             accelerator.print(f"all weights merged: {', '.join(args.base_weights)}")
 
         # 学習を準備する
-        if not args.incremental_reg_reload:
-            if cache_latents:
-                vae.to(accelerator.device, dtype=vae_dtype)
-                vae.requires_grad_(False)
-                vae.eval()
-                with torch.no_grad():
-                    train_dataset_group.cache_latents(vae, args.vae_batch_size, args.cache_latents_to_disk, accelerator.is_main_process)
-                vae.to("cpu")
-                clean_memory_on_device(accelerator.device)
-    
-                accelerator.wait_for_everyone()
-    
-            # 必要ならテキストエンコーダーの出力をキャッシュする: Text Encoderはcpuまたはgpuへ移される
-            # cache text encoder outputs if needed: Text Encoder is moved to cpu or gpu
-        self.cache_text_encoder_outputs_if_needed(
-            args, accelerator, unet, vae, tokenizers, text_encoders, train_dataset_group, weight_dtype
-        )
-
         # prepare network
         net_kwargs = {}
         if args.network_args is not None:
@@ -919,6 +901,7 @@ class NetworkTrainer:
 
             # Start cache latents here if necessary after train_datasetgroup has been finalized for the first run.
         if cache_latents:
+            train_dataset_groupset_use_cache_latents(True, vae, args.vae_batch_size, vae_dtype, args.cache_latents_to_disk, accelerator)
             vae.to(accelerator.device, dtype=vae_dtype)
             vae.requires_grad_(False)
             vae.eval()
@@ -928,17 +911,13 @@ class NetworkTrainer:
             clean_memory_on_device(accelerator.device)
 
             accelerator.wait_for_everyone()
-        else:
-            vae.requires_grad_(False)
-            vae.eval()
-            vae.to(accelerator.device, dtype=vae_dtype)
-
-        # 必要ならテキストエンコーダーの出力をキャッシュする: Text Encoderはcpuまたはgpuへ移される
-        # cache text encoder outputs if needed: Text Encoder is moved to cpu or gpu
-
+    
+            # 必要ならテキストエンコーダーの出力をキャッシュする: Text Encoderはcpuまたはgpuへ移される
+            # cache text encoder outputs if needed: Text Encoder is moved to cpu or gpu
         self.cache_text_encoder_outputs_if_needed(
             args, accelerator, unet, vae, tokenizers, text_encoders, train_dataset_group, weight_dtype
-        )          
+        )
+      
 
             # Moved train_dataloader creation here to create dataloader after finalizing train_dataset_group and caching as necessary.
 
@@ -1158,7 +1137,7 @@ class NetworkTrainer:
                 accelerator.wait_for_everyone()
                 self.sample_images(accelerator, args, epoch + 1, global_step, accelerator.device, vae, tokenizer, text_encoder, unet, example_tuple)
                 
-
+            '''
             # Reloading reg images here and checking cache before train_dataloader's workers are reinitialized
             if args.incremental_reg_reload and epoch + 1 < num_train_epochs:
                 train_dataset_group.incremental_reg_load(True)
@@ -1183,7 +1162,7 @@ class NetworkTrainer:
                     self.cache_text_encoder_outputs_if_needed(
                         args, accelerator, unet, vae, tokenizers, text_encoders, train_dataset_group, weight_dtype
                     )          
-                
+            '''
             # end of epoch
 
         # metadata["ss_epoch"] = str(num_train_epochs)
