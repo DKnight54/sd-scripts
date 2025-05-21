@@ -724,8 +724,8 @@ class BaseDataset(torch.utils.data.Dataset):
                 num_epochs = epoch - self.current_epoch
                 for _ in range(num_epochs):
                     self.current_epoch += 1
-                    self.bucket_manager = None
                     if self.reg_reload.value:
+                        self.bucket_manager = None
                         self.incremental_reg_load(make_bucket = True)
                 if self.use_cache_latents and self.reg_reload.value:
                     vae.to(accelerator.device, dtype=self.vae_dtype)
