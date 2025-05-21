@@ -887,7 +887,7 @@ class NetworkTrainer:
         
         # training loop
         if initial_step > 0:  # only if skip_until_initial_step is specified
-            '''
+            
             if args.incremental_reg_reload:
 
                 logger.info("Clearing existing data...")
@@ -895,7 +895,7 @@ class NetworkTrainer:
                 for step, batch in enumerate(tqdm(train_dataloader)):
                     continue
                 logger.info("Done clearing existing data")
-            '''
+            
             for skip_epoch in range(epoch_to_start):  # skip epochs
                 logger.info(f"skipping epoch {skip_epoch+1} because initial_step (multiplied) is {initial_step}")
                 initial_step -= num_of_steps
