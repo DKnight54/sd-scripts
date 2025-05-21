@@ -662,6 +662,7 @@ class BaseDataset(torch.utils.data.Dataset):
         self.reg_reload = Value("b", False)
         self.use_cache_latents = False
         self.vae = None
+        self.vae_dtype = None
         self.vae_batch_size = 1
         self.cache_latents_to_disk = False
         self.accelerator = None
@@ -699,10 +700,12 @@ class BaseDataset(torch.utils.data.Dataset):
     def set_seed(self, seed):
         self.seed.value = seed
         
-    def set_use_cache_latents(self, use_cache):
+    def set_use_cache_latents(self, use_cache, vae, vae_batch_size, vae_dtype, cache_latents_to_disk, accelerator):
         self.use_cache_latents = use_cache
-        
-     def set_accelerator(self, accelerator):   
+        self.vae = vae
+        self.vae_dtype = vae_dtype
+        self.vae_batch_size = vae_batch_size
+        self.cache_latents_to_disk = cache_latents_to_disk
         self.accelerator = accelerator
          
     def set_reg_reload(self, reg_reload):
@@ -724,14 +727,14 @@ class BaseDataset(torch.utils.data.Dataset):
                     if self.reg_reload.value:
                         self.incremental_reg_load(make_bucket = True)
                 if self.use_cache_latents and self.reg_reload.value:
-                    vae.to(accelerator.device, dtype=vae_dtype)
+                    vae.to(accelerator.device, dtype=self.vae_dtype)
                     vae.requires_grad_(False)
                     vae.eval()
                     with torch.no_grad():
                         cache_latents(self.vae, self.vae_batch_size, self.cache_to_disk, self.accelerator.is_main_process)
-                    
                     vae.to("cpu")
                     clean_memory_on_device(accelerator.device)
+                    accelerator.wait_for_everyone()
                 self.shuffle_buckets()
                 # self.current_epoch seem to be set to 0 again in the next epoch. it may be caused by skipped_dataloader?
             else:
@@ -1061,11 +1064,6 @@ class BaseDataset(torch.utils.data.Dataset):
     def cache_latents(self, vae, vae_batch_size=1, cache_to_disk=False, is_main_process=True):
         # マルチGPUには対応していないので、そちらはtools/cache_latents.pyを使うこと
         logger.info("caching latents.")
-        if not self.use_cache_latents:
-            self.vae = vae
-            self.vae_batch_size = vae_batch_size
-            self.cache_latents_to_disk = cache_to_disk
-            self.use_cache_latents = True
         image_infos = list(self.image_data.values())
         image_infos = list(filter(lambda info: info.latent_cache_checked == False, image_infos))
 
