@@ -1852,19 +1852,17 @@ class DreamBoothDataset(BaseDataset):
         start_index = self.temp_index
         while n < self.num_train_images :
             info, subset = temp_reg_infos[self.reg_infos_index[self.temp_index]]
-            if first_loop:
-                self.register_image(info, subset)
-                n += info.num_repeats
-            else:
-                info.num_repeats += 1  # rewrite registered info
-                n += 1
+            if info.image_key in self.image_data:
+                    info.num_repeats += 1  # rewrite registered info
+                else:
+                    self.register_image(info, subset)
+            
             self.temp_index += 1
             if self.temp_index % len(self.reg_infos_index) == 0:
                 self.temp_index = 0
-            if first_loop and self.reg_infos_index == start_index:
-                first_loop = False
             if n < 5:
-                    reg_img_log += f"\nRegistering image: {info.absolute_path}, count: {info.num_repeats}"
+                reg_img_log += f"\nRegistering image: {info.absolute_path}, count: {info.num_repeats}"
+            n += 1
             
             '''
             for reg_key in self.reg_infos_index:
