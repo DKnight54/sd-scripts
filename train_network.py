@@ -1,3 +1,4 @@
+
 import importlib
 import argparse
 import math
@@ -1133,7 +1134,7 @@ class NetworkTrainer:
             if args.logging_dir is not None:
                 logs = {"loss/epoch": loss_recorder.moving_average}
                 accelerator.log(logs, step=epoch + 1)
-            del sharded_dataloader
+                
             accelerator.wait_for_everyone()
             progress_bar.close()
 
@@ -1159,8 +1160,8 @@ class NetworkTrainer:
                 
            
             # Reloading reg images here and checking cache before train_dataloader's workers are reinitialized
+            '''
             if args.incremental_reg_reload and epoch + 1 < num_train_epochs:
-                del sharded_dataloader, train_dataloader
                 train_dataset_group.incremental_reg_load(True)
                 if cache_latents:
                     vae.to(accelerator.device, dtype=vae_dtype)
@@ -1176,14 +1177,13 @@ class NetworkTrainer:
                     vae.requires_grad_(False)
                     vae.eval()
                     vae.to(accelerator.device, dtype=vae_dtype)
-
+            '''
             # 必要ならテキストエンコーダーの出力をキャッシュする: Text Encoderはcpuまたはgpuへ移される
             # cache text encoder outputs if needed: Text Encoder is moved to cpu or gpu
-                if args.cache_text_encoder_outputs:
-                    self.cache_text_encoder_outputs_if_needed(
-                        args, accelerator, unet, vae, tokenizers, text_encoders, train_dataset_group, weight_dtype
-                    )  
+                '''
                 ds_for_collator = train_dataset_group if args.max_data_loader_n_workers == 0 else None
+                #current_epoch.value = epoch_to_start
+                #current_step.value = global_step
                 collator = train_util.collator_class(current_epoch, current_step, ds_for_collator)
                 train_dataloader = torch.utils.data.DataLoader(
                     train_dataset_group,
@@ -1193,8 +1193,8 @@ class NetworkTrainer:
                     num_workers=n_workers,
                     persistent_workers=args.persistent_data_loader_workers,
                 )
-        
                 sharded_dataloader = accelerator.prepare(train_dataloader)
+                '''
 
             # end of epoch
 
