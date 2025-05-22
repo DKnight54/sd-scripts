@@ -923,8 +923,7 @@ class NetworkTrainer:
                 # current_epoch.value = skip_epoch+1
                 train_dataset_group.incremental_reg_load(True)
                 initial_step -= num_of_steps
-            train_dataset_group.make_buckets()
-
+                
             # Start cache latents here if necessary after train_datasetgroup has been finalized for the first run.
             if cache_latents:
                 vae.to(accelerator.device, dtype=vae_dtype)
