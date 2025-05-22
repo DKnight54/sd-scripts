@@ -958,7 +958,7 @@ class BaseDataset(torch.utils.data.Dataset):
                     image_width, image_height
                 )
 
-                 logger.info(f"Bucket Reso: {image_info.image_key}, {image_info.bucket_reso}")
+                logger.info(f"Bucket Reso: {image_info.image_key}, {image_info.bucket_reso}")
                 img_ar_errors.append(abs(ar_error))
 
             self.bucket_manager.sort()
