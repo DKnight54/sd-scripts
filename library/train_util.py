@@ -643,7 +643,7 @@ class BaseDataset(torch.utils.data.Dataset):
 
         self.current_step: int = 0
         self.max_train_steps: int = 0
-        self.seed = Value("i", 0)
+        self.seed: int = 0
 
         # augmentation
         self.aug_helper = AugHelper()
@@ -659,15 +659,7 @@ class BaseDataset(torch.utils.data.Dataset):
         self.caching_mode = None  # None, 'latents', 'text'
         self.reg_infos = None
         self.reg_infos_index = None
-        self.reg_reload = Value("b", False)
-        self.use_cache_latents = False
-        self.vae = None
-        self.vae_dtype = None
-        self.vae_batch_size = 1
-        self.cache_latents_to_disk = False
-        self.accelerator = None
-
-        
+     
 
     def adjust_min_max_bucket_reso_by_steps(
         self, resolution: Tuple[int, int], min_bucket_reso: int, max_bucket_reso: int, bucket_reso_steps: int
@@ -698,10 +690,7 @@ class BaseDataset(torch.utils.data.Dataset):
         return min_bucket_reso, max_bucket_reso
 
     def set_seed(self, seed):
-        self.seed.value = seed
-         
-    def set_reg_reload(self, reg_reload):
-        self.reg_reload.value = reg_reload
+        self.seed = seed
 
     def incremental_reg_load(self, make_bucket = False): # Placeholder method, does nothing unless overridden in subclasses.
         return
