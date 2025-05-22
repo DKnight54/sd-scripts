@@ -660,7 +660,13 @@ class BaseDataset(torch.utils.data.Dataset):
         self.caching_mode = None  # None, 'latents', 'text'
         self.reg_infos = None
         self.reg_infos_index = None
-     
+        self.use_cache_latents = False
+        self.reg_reload = False
+        self.vae = None
+        self.vae_batch_size = 1
+        self.cache_to_disk = False
+        self.accelerator = None
+             
 
     def adjust_min_max_bucket_reso_by_steps(
         self, resolution: Tuple[int, int], min_bucket_reso: int, max_bucket_reso: int, bucket_reso_steps: int
@@ -706,7 +712,7 @@ class BaseDataset(torch.utils.data.Dataset):
                 num_epochs = epoch - self.current_epoch
                 for _ in range(num_epochs):
                     self.current_epoch += 1
-                    '''
+                    
                     if self.reg_reload.value:
                         self.bucket_manager = None
                         self.incremental_reg_load(make_bucket = True)
@@ -719,7 +725,7 @@ class BaseDataset(torch.utils.data.Dataset):
                     vae.to("cpu")
                     clean_memory_on_device(accelerator.device)
                     accelerator.wait_for_everyone()
-                    '''
+                    
                 self.shuffle_buckets()
                 # self.current_epoch seem to be set to 0 again in the next epoch. it may be caused by skipped_dataloader?
             else:
