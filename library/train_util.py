@@ -652,6 +652,7 @@ class BaseDataset(torch.utils.data.Dataset):
 
         self.image_data: Dict[str, ImageInfo] = {}
         self.image_to_subset: Dict[str, Union[DreamBoothSubset, FineTuningSubset]] = {}
+        self.buckets_indices: List[BucketBatchIndex] = []
 
         self.replacements = {}
 
@@ -957,7 +958,7 @@ class BaseDataset(torch.utils.data.Dataset):
                     image_width, image_height
                 )
 
-                # logger.info(image_info.image_key, image_info.bucket_reso)
+                 logger.info(f"Bucket Reso: {image_info.image_key}, {image_info.bucket_reso}")
                 img_ar_errors.append(abs(ar_error))
 
             self.bucket_manager.sort()
@@ -976,12 +977,18 @@ class BaseDataset(torch.utils.data.Dataset):
         if self.enable_bucket:
             self.bucket_info = {"buckets": {}}
             logger.info("number of images (including repeats) / 各bucketの画像枚数（繰り返し回数を含む）")
+            batch_count = 0
             for i, (reso, bucket) in enumerate(zip(self.bucket_manager.resos, self.bucket_manager.buckets)):
                 count = len(bucket)
                 if count > 0:
+                    batch_count += {int(math.ceil(len(bucket) / self.batch_size))}
                     self.bucket_info["buckets"][i] = {"resolution": reso, "count": len(bucket)}
-                    logger.info(f"bucket {i}: resolution {reso}, count: {len(bucket)}")
-
+                    logger.info(f"bucket {i}: resolution {reso}, count: {len(bucket)}, batches: {int(math.ceil(len(bucket) / self.batch_size))}")
+                    keylist = ""
+                    for index, key in enumerate(bucket):
+                        keylist += f"Index {index}: {key}\n"
+                    logger.info(keylist)
+            logger.info(f"Total batch count: {batch_count}")
             if len(img_ar_errors) == 0:
                 mean_img_ar_error = 0  # avoid NaN
             else:
@@ -991,12 +998,15 @@ class BaseDataset(torch.utils.data.Dataset):
             logger.info(f"mean ar error (without repeats): {mean_img_ar_error}")
 
         # データ参照用indexを作る。このindexはdatasetのshuffleに用いられる
-        self.buckets_indices: List[BucketBatchIndex] = []
-        self.buckets_indices.clear()
+        if len(self.buckets_indices) > 0:
+            self.buckets_indices.clear()
+            logger.info(f"Resetting self.buckets_indices, now {len(self.buckets_indices)}")
+        testing_bucket_indices_counter = 0
         for bucket_index, bucket in enumerate(self.bucket_manager.buckets):
             batch_count = int(math.ceil(len(bucket) / self.batch_size))
             for batch_index in range(batch_count):
                 self.buckets_indices.append(BucketBatchIndex(bucket_index, self.batch_size, batch_index))
+                testing_bucket_indices_counter += 1
 
             # ↓以下はbucketごとのbatch件数があまりにも増えて混乱を招くので元に戻す
             # 　学習時はステップ数がランダムなので、同一画像が同一batch内にあってもそれほど悪影響はないであろう、と考えられる
@@ -1016,6 +1026,7 @@ class BaseDataset(torch.utils.data.Dataset):
 
         self.shuffle_buckets()
         self._length = len(self.buckets_indices)
+        logger.info(f"_length = {self._length}, len(self.buckets_indices) = {len(self.buckets_indices)}, test counter = {testing_bucket_indices_counter}")
 
     def shuffle_buckets(self):
         # set random seed for this epoch
