@@ -895,7 +895,6 @@ class NetworkTrainer:
 
             # Start cache latents here if necessary after train_datasetgroup has been finalized for the first run.
         if cache_latents:
-            train_dataset_groupset_use_cache_latents(True, vae, args.vae_batch_size, vae_dtype, args.cache_latents_to_disk, accelerator)
             vae.to(accelerator.device, dtype=vae_dtype)
             vae.requires_grad_(False)
             vae.eval()
