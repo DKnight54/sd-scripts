@@ -1019,7 +1019,7 @@ class BaseDataset(torch.utils.data.Dataset):
 
     def shuffle_buckets(self):
         # set random seed for this epoch
-        random.seed(self.seed.value + self.current_epoch)
+        random.seed(self.seed + self.current_epoch)
 
         random.shuffle(self.buckets_indices)
         self.bucket_manager.shuffle()
