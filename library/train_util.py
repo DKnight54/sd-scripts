@@ -699,14 +699,6 @@ class BaseDataset(torch.utils.data.Dataset):
 
     def set_seed(self, seed):
         self.seed.value = seed
-        
-    def set_use_cache_latents(self, use_cache, vae, vae_batch_size, vae_dtype, cache_latents_to_disk, accelerator):
-        self.use_cache_latents = use_cache
-        self.vae = vae
-        self.vae_dtype = vae_dtype
-        self.vae_batch_size = vae_batch_size
-        self.cache_latents_to_disk = cache_latents_to_disk
-        self.accelerator = accelerator
          
     def set_reg_reload(self, reg_reload):
         self.reg_reload.value = reg_reload
