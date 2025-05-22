@@ -712,7 +712,8 @@ class BaseDataset(torch.utils.data.Dataset):
                 num_epochs = epoch - self.current_epoch
                 for _ in range(num_epochs):
                     self.current_epoch += 1
-                    
+                    '''
+                    # Probably possible to imeplement auto reload reg images here, but needs to include handling for caching Latents and TE
                     if self.reg_reload.value:
                         self.bucket_manager = None
                         self.incremental_reg_load(make_bucket = True)
@@ -725,7 +726,7 @@ class BaseDataset(torch.utils.data.Dataset):
                     vae.to("cpu")
                     clean_memory_on_device(accelerator.device)
                     accelerator.wait_for_everyone()
-                    
+                    '''
                 self.shuffle_buckets()
                 # self.current_epoch seem to be set to 0 again in the next epoch. it may be caused by skipped_dataloader?
             else:
