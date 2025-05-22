@@ -1152,7 +1152,7 @@ class BaseDataset(torch.utils.data.Dataset):
         for condition, batch in tqdm(batches, smoothing=1, total=len(batches)):
             cache_batch_latents(vae, cache_to_disk, batch, condition.flip_aug, condition.alpha_mask, condition.random_crop)
             if self.reg_infos is not None:
-                for info in batches:
+                for info in batch:
                     if info.image_key in self.reg_infos:
                         self.reg_infos[info.image_key][0].latents_npz = info.latents_npz
                         self.reg_infos[info.image_key][0].latents_original_size = info.latents_original_size
