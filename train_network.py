@@ -137,6 +137,11 @@ class NetworkTrainer:
         train_util.sample_images(accelerator, args, epoch, global_step, device, vae, tokenizer, text_encoder, unet, example_tuple)
 
     def train(self, args):
+        # acceleratorを準備する
+        logger.info("preparing accelerator")
+        accelerator = train_util.prepare_accelerator(args)
+        is_main_process = accelerator.is_main_process
+        
         session_id = random.randint(0, 2**32)
         training_started_at = time.time()
         train_util.verify_training_args(args)
@@ -149,7 +154,10 @@ class NetworkTrainer:
         use_user_config = args.dataset_config is not None
 
         if args.seed is None:
-            args.seed = random.randint(0, 2**32)
+            seed = [random.randint(0, 2**32)]
+            seed = gather_object(seed)
+            args.seed = seed[0]
+            logger.info(f"Seed for this run is: {args.seed}.")
         set_seed(args.seed)
 
         # tokenizerは単体またはリスト、tokenizersは必ずリスト：既存のコードとの互換性のため
@@ -222,11 +230,6 @@ class NetworkTrainer:
             ), "when caching latents, either color_aug or random_crop cannot be used / latentをキャッシュするときはcolor_augとrandom_cropは使えません"
 
         self.assert_extra_args(args, train_dataset_group)
-
-        # acceleratorを準備する
-        logger.info("preparing accelerator")
-        accelerator = train_util.prepare_accelerator(args)
-        is_main_process = accelerator.is_main_process
 
         # mixed precisionに対応した型を用意しておき適宜castする
         weight_dtype, save_dtype = train_util.prepare_dtype(args)
