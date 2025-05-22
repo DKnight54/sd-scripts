@@ -1160,7 +1160,7 @@ class NetworkTrainer:
                 
            
             # Reloading reg images here and checking cache before train_dataloader's workers are reinitialized
-            '''
+            
             if args.incremental_reg_reload and epoch + 1 < num_train_epochs:
                 train_dataset_group.incremental_reg_load(True)
                 if cache_latents:
@@ -1177,10 +1177,10 @@ class NetworkTrainer:
                     vae.requires_grad_(False)
                     vae.eval()
                     vae.to(accelerator.device, dtype=vae_dtype)
-            '''
+            
             # 必要ならテキストエンコーダーの出力をキャッシュする: Text Encoderはcpuまたはgpuへ移される
             # cache text encoder outputs if needed: Text Encoder is moved to cpu or gpu
-                '''
+                
                 ds_for_collator = train_dataset_group if args.max_data_loader_n_workers == 0 else None
                 #current_epoch.value = epoch_to_start
                 #current_step.value = global_step
@@ -1194,7 +1194,7 @@ class NetworkTrainer:
                     persistent_workers=args.persistent_data_loader_workers,
                 )
                 sharded_dataloader = accelerator.prepare(train_dataloader)
-                '''
+                
 
             # end of epoch
 
