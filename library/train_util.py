@@ -1848,7 +1848,7 @@ class DreamBoothDataset(BaseDataset):
         n = 0
         first_loop = True
         logger.info(f"self.reg_infos_index at: {self.temp_index}\n reg_infos_index len = {len(self.reg_infos_index)}")
-        reg_img_log = f"\nDataset seed: {self.seed.value}"
+        reg_img_log = f"\nDataset seed: {self.seed}"
         start_index = self.temp_index
         while n < self.num_train_images :
             info, subset = temp_reg_infos[self.reg_infos_index[self.temp_index]]
