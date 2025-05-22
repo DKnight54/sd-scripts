@@ -1160,6 +1160,7 @@ class NetworkTrainer:
            
             # Reloading reg images here and checking cache before train_dataloader's workers are reinitialized
             if args.incremental_reg_reload and epoch + 1 < num_train_epochs:
+                del sharded_dataloader, train_dataloader
                 train_dataset_group.incremental_reg_load(True)
                 if cache_latents:
                     vae.to(accelerator.device, dtype=vae_dtype)
