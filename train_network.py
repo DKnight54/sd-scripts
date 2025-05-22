@@ -876,6 +876,24 @@ class NetworkTrainer:
         if args.incremental_reg_reload:
             logger.warning("incremental_reg_reload = True. Incremental reloading of Regularization Images requires persistent_data_loader_workers = false, overriding.")
             args.persistent_data_loader_workers = False
+        
+        if cache_latents:
+            vae.to(accelerator.device, dtype=vae_dtype)
+            vae.requires_grad_(False)
+            vae.eval()
+            with torch.no_grad():
+                train_dataset_group.cache_latents(vae, args.vae_batch_size, args.cache_latents_to_disk, accelerator.is_main_process)
+            vae.to("cpu")
+            clean_memory_on_device(accelerator.device)
+
+            accelerator.wait_for_everyone()
+    
+            # 必要ならテキストエンコーダーの出力をキャッシュする: Text Encoderはcpuまたはgpuへ移される
+            # cache text encoder outputs if needed: Text Encoder is moved to cpu or gpu
+        self.cache_text_encoder_outputs_if_needed(
+            args, accelerator, unet, vae, tokenizers, text_encoders, train_dataset_group, weight_dtype
+        )        
+        
         ds_for_collator = train_dataset_group if args.max_data_loader_n_workers == 0 else None
         #current_epoch.value = epoch_to_start
         #current_step.value = global_step
@@ -903,28 +921,28 @@ class NetworkTrainer:
             for skip_epoch in range(epoch_to_start):  # skip epochs
                 logger.info(f"skipping epoch {skip_epoch+1} because initial_step (multiplied) is {initial_step}")
                 # current_epoch.value = skip_epoch+1
-                train_dataset_group.incremental_reg_load(False)
+                train_dataset_group.incremental_reg_load(True)
                 initial_step -= num_of_steps
             train_dataset_group.make_buckets()
 
             # Start cache latents here if necessary after train_datasetgroup has been finalized for the first run.
-        if cache_latents:
-            vae.to(accelerator.device, dtype=vae_dtype)
-            vae.requires_grad_(False)
-            vae.eval()
-            with torch.no_grad():
-                train_dataset_group.cache_latents(vae, args.vae_batch_size, args.cache_latents_to_disk, accelerator.is_main_process)
-            vae.to("cpu")
-            clean_memory_on_device(accelerator.device)
-
-            accelerator.wait_for_everyone()
+            if cache_latents:
+                vae.to(accelerator.device, dtype=vae_dtype)
+                vae.requires_grad_(False)
+                vae.eval()
+                with torch.no_grad():
+                    train_dataset_group.cache_latents(vae, args.vae_batch_size, args.cache_latents_to_disk, accelerator.is_main_process)
+                vae.to("cpu")
+                clean_memory_on_device(accelerator.device)
     
-            # 必要ならテキストエンコーダーの出力をキャッシュする: Text Encoderはcpuまたはgpuへ移される
-            # cache text encoder outputs if needed: Text Encoder is moved to cpu or gpu
-        self.cache_text_encoder_outputs_if_needed(
-            args, accelerator, unet, vae, tokenizers, text_encoders, train_dataset_group, weight_dtype
-        )
-      
+                accelerator.wait_for_everyone()
+        
+                # 必要ならテキストエンコーダーの出力をキャッシュする: Text Encoderはcpuまたはgpuへ移される
+                # cache text encoder outputs if needed: Text Encoder is moved to cpu or gpu
+            self.cache_text_encoder_outputs_if_needed(
+                args, accelerator, unet, vae, tokenizers, text_encoders, train_dataset_group, weight_dtype
+            )
+          
 
             # Moved train_dataloader creation here to create dataloader after finalizing train_dataset_group and caching as necessary.
 
