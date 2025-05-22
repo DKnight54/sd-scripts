@@ -2376,6 +2376,7 @@ class DatasetGroup(torch.utils.data.ConcatDataset):
     def set_current_epoch(self, epoch):
         for dataset in self.datasets:
             dataset.set_current_epoch(epoch)
+        self.cumulative_sizes = self.cumsum(self.datasets)
 
     def set_current_step(self, step):
         for dataset in self.datasets:
