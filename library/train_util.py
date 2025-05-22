@@ -2340,6 +2340,8 @@ class DatasetGroup(torch.utils.data.ConcatDataset):
     def make_buckets(self):
         for dataset in self.datasets:
             dataset.make_buckets()
+        self.cumulative_sizes = self.cumsum(self.datasets)
+
 
     def enable_XTI(self, *args, **kwargs):
         for dataset in self.datasets:
@@ -2390,6 +2392,8 @@ class DatasetGroup(torch.utils.data.ConcatDataset):
     def incremental_reg_load(self, make_bucket = False):
         for dataset in self.datasets:
             dataset.incremental_reg_load(make_bucket)
+        if make_bucket:
+            self.cumulative_sizes = self.cumsum(self.datasets)
 
 def is_disk_cached_latents_is_expected(reso, npz_path: str, flip_aug: bool, alpha_mask: bool):
     expected_latents_size = (reso[1] // 8, reso[0] // 8)  # bucket_resoはWxHなので注意
