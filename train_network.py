@@ -871,7 +871,6 @@ class NetworkTrainer:
         if args.sample_at_first == True:
             self.sample_images(accelerator, args, 0, 0, accelerator.device, vae, tokenizer, text_encoder, unet)
         if args.incremental_reg_reload:
-            train_dataset_group.set_reg_reload(True)
             logger.warning("incremental_reg_reload = True. Incremental reloading of Regularization Images requires persistent_data_loader_workers = false, overriding.")
             args.persistent_data_loader_workers = False
         ds_for_collator = train_dataset_group if args.max_data_loader_n_workers == 0 else None
