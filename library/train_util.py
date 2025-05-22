@@ -1285,7 +1285,7 @@ class BaseDataset(torch.utils.data.Dataset):
         return image
 
     def __len__(self):
-        return self._length
+        return len(self.buckets_indices)
 
     def __getitem__(self, index):
         bucket = self.bucket_manager.buckets[self.buckets_indices[index].bucket_index]
