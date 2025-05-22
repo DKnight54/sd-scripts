@@ -977,11 +977,11 @@ class BaseDataset(torch.utils.data.Dataset):
         if self.enable_bucket:
             self.bucket_info = {"buckets": {}}
             logger.info("number of images (including repeats) / 各bucketの画像枚数（繰り返し回数を含む）")
-            batch_count = 0
+            batch_count: int = 0
             for i, (reso, bucket) in enumerate(zip(self.bucket_manager.resos, self.bucket_manager.buckets)):
                 count = len(bucket)
                 if count > 0:
-                    batch_count += {int(math.ceil(len(bucket) / self.batch_size))}
+                    batch_count += math.ceil(len(bucket) / self.batch_size)
                     self.bucket_info["buckets"][i] = {"resolution": reso, "count": len(bucket)}
                     logger.info(f"bucket {i}: resolution {reso}, count: {len(bucket)}, batches: {int(math.ceil(len(bucket) / self.batch_size))}")
                     keylist = ""
