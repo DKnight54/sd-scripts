@@ -1853,9 +1853,9 @@ class DreamBoothDataset(BaseDataset):
         while n < self.num_train_images :
             info, subset = temp_reg_infos[self.reg_infos_index[self.temp_index]]
             if info.image_key in self.image_data:
-                    info.num_repeats += 1  # rewrite registered info
-                else:
-                    self.register_image(info, subset)
+                info.num_repeats += 1  # rewrite registered info
+            else:
+                self.register_image(info, subset)
             
             self.temp_index += 1
             if self.temp_index % len(self.reg_infos_index) == 0:
