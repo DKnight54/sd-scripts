@@ -744,7 +744,7 @@ class BaseDataset(torch.utils.data.Dataset):
                     vae.requires_grad_(False)
                     vae.eval()
                     with torch.no_grad():
-                        cache_latents(self.vae, self.vae_batch_size, self.cache_to_disk)
+                        self.cache_latents(self.vae, self.vae_batch_size, self.cache_to_disk)
                     vae.to("cpu")
                     clean_memory_on_device(distributed_state.device)
                     distributed_state.wait_for_everyone()
