@@ -706,6 +706,9 @@ class BaseDataset(torch.utils.data.Dataset):
     def set_reg_randomize(self, reg_randomize = False):
         self.reg_randomize = reg_randomize
 
+    def set_reg_reload(self, reg_reload):
+        self.reg_reload = reg_reload
+            
     def incremental_reg_load(self, make_bucket = False): # Placeholder method, does nothing unless overridden in subclasses.
         return
         
@@ -731,12 +734,12 @@ class BaseDataset(torch.utils.data.Dataset):
                 '''
                 for _ in range(num_epochs):
                     self.current_epoch += 1
-                    if self.reg_reload.value and self.reg_infos is not None and len(reg_infos) > 0:
+                    if self.reg_reload and self.reg_infos is not None and len(reg_infos) > 0:
                         self.bucket_manager = None
                         self.incremental_reg_load(make_bucket = False)
-                if self.reg_reload.value and self.reg_infos is not None and len(reg_infos) > 0:
+                if self.reg_reload and self.reg_infos is not None and len(reg_infos) > 0:
                     self.make_buckets()
-                if self.use_cache_latents and self.reg_reload.value and self.reg_infos is not None and len(reg_infos) > 0:
+                if self.use_cache_latents and self.reg_reload and self.reg_infos is not None and len(reg_infos) > 0:
                     vae.to(distributed_state.device, dtype=self.vae_dtype)
                     vae.requires_grad_(False)
                     vae.eval()
