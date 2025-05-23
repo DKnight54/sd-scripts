@@ -1178,7 +1178,7 @@ class BaseDataset(torch.utils.data.Dataset):
             for info in temp_list:
                     needs_caching.append(info.info)
             needs_caching.sort(key=lambda info: info.bucket_reso[0] * info.bucket_reso[1])
-            del  temp_list, image_infos
+            del  temp_list
 
         for info in needs_caching:
             # if batch is not empty and condition is changed, flush the batch. Note that current_condition is not None if batch is not empty
