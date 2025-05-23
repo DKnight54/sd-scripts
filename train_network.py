@@ -879,7 +879,6 @@ class NetworkTrainer:
             # args.persistent_data_loader_workers = False
         
         if cache_latents:
-            train_dataset_group.set_latent_cache_params(vae_dtype, cache_latents, vae, args.vae_batch_size, args.cache_latents_to_disk)
             vae.to(accelerator.device, dtype=vae_dtype)
             vae.requires_grad_(False)
             vae.eval()
@@ -961,8 +960,9 @@ class NetworkTrainer:
             if initial_step > 0:
                 skipped_dataloader = accelerator.skip_first_batches(sharded_dataloader, initial_step - 1)
                 initial_step = 1
-            progress_bar = tqdm(range(math.ceil(len(skipped_dataloader or sharded_dataloader) / args.gradient_accumulation_steps)), smoothing=0, disable=not accelerator.is_local_main_process, desc="steps")
             logger.info(f"\nProcess: {accelerator.state.local_process_index + 1 }/{accelerator.state.num_processes}\nLength of Dataloader: {len(skipped_dataloader or train_dataloader)}\nLength of train_dataset_group: {len(train_dataset_group)}")
+            progress_bar = tqdm(range(math.ceil(len(skipped_dataloader or sharded_dataloader) / args.gradient_accumulation_steps)), smoothing=0, disable=not accelerator.is_local_main_process, desc="steps")
+            
             for step, batch in enumerate(skipped_dataloader or sharded_dataloader):
                 current_step.value = global_step
                 if initial_step > 0:
