@@ -1134,7 +1134,6 @@ class BaseDataset(torch.utils.data.Dataset):
         needs_caching: List[ImageInfo] = [] 
         current_condition = None
 
-        check_counter = 0
         logger.info("checking cache validity...")
         for info in tqdm(image_infos):
             
@@ -1151,9 +1150,6 @@ class BaseDataset(torch.utils.data.Dataset):
                 info.latents_npz = os.path.splitext(info.absolute_path)[0] + ".npz"
                 if self.reg_infos is not None and info.image_key in self.reg_infos and self.reg_infos[info.image_key][0].latents_npz is not None:
                     self.reg_infos[info.image_key][0].latents_npz = info.latents_npz
-                if check_counter < 5:
-                    check_counter += 1
-                    logger.info(f'{info.latents_npz}')
 
                 cache_available = is_disk_cached_latents_is_expected(
                     info.bucket_reso, info.latents_npz, subset.flip_aug, subset.alpha_mask
