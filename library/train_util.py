@@ -2755,10 +2755,9 @@ def cache_batch_latents(
             raise RuntimeError(f"NaN detected in latents: {info.absolute_path}")
 
         if cache_to_disk:
-            cache_available = is_disk_cached_latents_is_expected(
-                info.bucket_reso, info.latents_npz, subset.flip_aug, subset.alpha_mask
-            )
-            if not cache_available:
+            if not is_disk_cached_latents_is_expected(
+                info.bucket_reso, info.latents_npz, flip_aug, use_alpha_mask
+            ):
                 save_latents_to_disk(
                     info.latents_npz,
                     latent,
