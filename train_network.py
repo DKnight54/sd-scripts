@@ -155,9 +155,7 @@ class NetworkTrainer:
         use_user_config = args.dataset_config is not None
 
         if args.seed is None:
-            seed = [random.randint(0, 2**32)]
-            seed = gather_object(seed)
-            args.seed = seed[0]
+            args.seed = random.randint(0, 2**32)
             logger.info(f"Seed for this run is: {args.seed}.")
         set_seed(args.seed)
 
