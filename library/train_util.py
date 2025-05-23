@@ -1206,7 +1206,7 @@ class BaseDataset(torch.utils.data.Dataset):
                         cache_batch_latents(vae, cache_to_disk, batch, condition.flip_aug, condition.alpha_mask, condition.random_crop)
                         for info in batch:
                             output.append(info)
-            output = gather_objects(output)
+            output = gather_object(output)
             for info in output:
                 if info.image_key in self.reg_infos:
                     self.reg_infos[info.image_key][0].latents_npz = info.latents_npz
