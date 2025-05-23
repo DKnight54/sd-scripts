@@ -2471,7 +2471,6 @@ class DatasetGroup(torch.utils.data.ConcatDataset):
     def set_current_epoch(self, epoch):
         for dataset in self.datasets:
             dataset.set_current_epoch(epoch)
-        self.cumulative_sizes = self.cumsum(self.datasets)
 
     def set_current_step(self, step):
         for dataset in self.datasets:
@@ -2489,8 +2488,10 @@ class DatasetGroup(torch.utils.data.ConcatDataset):
         for i, dataset in enumerate(self.datasets):
             logger.info(f"[Dataset {i}]")
             dataset.incremental_reg_load(make_bucket)
-        if make_bucket:
-            self.cumulative_sizes = self.cumsum(self.datasets)
+
+    def __len__(self):
+        self.cumulative_sizes = self.cumsum(self.datasets)
+        return self.cumulative_sizes[-1]
 
 def is_disk_cached_latents_is_expected(reso, npz_path: str, flip_aug: bool, alpha_mask: bool):
     expected_latents_size = (reso[1] // 8, reso[0] // 8)  # bucket_resoはWxHなので注意
