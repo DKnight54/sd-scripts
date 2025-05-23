@@ -169,6 +169,7 @@ class ImageInfo:
         self.alpha_mask: Optional[torch.Tensor] = None  # alpha mask can be flipped in runtime
         self.latent_cache_checked: bool = False
         self.te_cache_checked: bool = False
+    
 
 
 class BucketManager:
@@ -658,15 +659,17 @@ class BaseDataset(torch.utils.data.Dataset):
 
         # caching
         self.caching_mode = None  # None, 'latents', 'text'
+
+        # lists for incremental loading of regularization images
         self.reg_infos = None
         self.reg_infos_index = None
+
+        # Handling cache latents during automatic update
         self.use_cache_latents = False
         self.reg_reload = False
         self.vae = None
         self.vae_batch_size = 1
         self.cache_to_disk = False
-        self.accelerator = None
-             
 
     def adjust_min_max_bucket_reso_by_steps(
         self, resolution: Tuple[int, int], min_bucket_reso: int, max_bucket_reso: int, bucket_reso_steps: int
@@ -704,29 +707,41 @@ class BaseDataset(torch.utils.data.Dataset):
         
     def set_caching_mode(self, mode):
         self.caching_mode = mode
-
+        
+    def set_latent_cache_params(self, vae_dtype, use_cache_latents = False, vae = None, vae_batch_size = 1, cache_to_disk = False):
+        self.vae = vae
+        self.vae_dtype = vae_dtype
+        self.vae_batch_size = vae_batch_size
+        self.cache_to_disk = cache_to_disk
+        self.use_cache_latents = False
+            
     def set_current_epoch(self, epoch):
         if not self.current_epoch == epoch:  # epochが切り替わったらバケツをシャッフルする
+            distributed_state = PartialState()
             if epoch > self.current_epoch:
                 logger.info("epoch is incremented. current_epoch: {}, epoch: {}".format(self.current_epoch, epoch))
                 num_epochs = epoch - self.current_epoch
+                '''
+                Implemented self update loaded regularization images and latent caching.
+                TODO: Implement text encoder caching for SDXL support? Need idea of TE caching logic.
+                '''
                 for _ in range(num_epochs):
                     self.current_epoch += 1
-                    '''
-                    # Probably possible to imeplement auto reload reg images here, but needs to include handling for caching Latents and TE
-                    if self.reg_reload.value:
+                    if self.reg_reload.value and self.reg_infos is not None and len(reg_infos) > 0:
                         self.bucket_manager = None
-                        self.incremental_reg_load(make_bucket = True)
-                if self.use_cache_latents and self.reg_reload.value:
-                    vae.to(accelerator.device, dtype=self.vae_dtype)
+                        self.incremental_reg_load(make_bucket = False)
+                if self.reg_reload.value and self.reg_infos is not None and len(reg_infos) > 0:
+                    self.make_buckets()
+                if self.use_cache_latents and self.reg_reload.value and self.reg_infos is not None and len(reg_infos) > 0:
+                    vae.to(distributed_state.device, dtype=self.vae_dtype)
                     vae.requires_grad_(False)
                     vae.eval()
                     with torch.no_grad():
-                        cache_latents(self.vae, self.vae_batch_size, self.cache_to_disk, self.accelerator.is_main_process)
+                        cache_latents(self.vae, self.vae_batch_size, self.cache_to_disk)
                     vae.to("cpu")
-                    clean_memory_on_device(accelerator.device)
-                    accelerator.wait_for_everyone()
-                    '''
+                    clean_memory_on_device(distributed_state.device)
+                    distributed_state.wait_for_everyone()
+                    
                 self.shuffle_buckets()
                 # self.current_epoch seem to be set to 0 again in the next epoch. it may be caused by skipped_dataloader?
             else:
@@ -965,7 +980,7 @@ class BaseDataset(torch.utils.data.Dataset):
                     image_width, image_height
                 )
 
-                logger.info(f"Bucket Reso: {image_info.image_key}, {image_info.bucket_reso}")
+                # logger.info(f"Bucket Reso: {image_info.image_key}, {image_info.bucket_reso}")
                 img_ar_errors.append(abs(ar_error))
 
             self.bucket_manager.sort()
@@ -991,10 +1006,13 @@ class BaseDataset(torch.utils.data.Dataset):
                     batch_count += math.ceil(len(bucket) / self.batch_size)
                     self.bucket_info["buckets"][i] = {"resolution": reso, "count": len(bucket)}
                     logger.info(f"bucket {i}: resolution {reso}, count: {len(bucket)}, batches: {int(math.ceil(len(bucket) / self.batch_size))}")
+                    '''
+                    # Debugging: Lists all images by index in bucket
                     keylist = ""
                     for index, key in enumerate(bucket):
                         keylist += f"Index {index}: {key}\n"
                     logger.info(keylist)
+                    '''
             logger.info(f"Total batch count: {batch_count}")
             if len(img_ar_errors) == 0:
                 mean_img_ar_error = 0  # avoid NaN
@@ -1008,12 +1026,12 @@ class BaseDataset(torch.utils.data.Dataset):
         if len(self.buckets_indices) > 0:
             self.buckets_indices.clear()
             logger.info(f"Resetting self.buckets_indices, now {len(self.buckets_indices)}")
-        testing_bucket_indices_counter = 0
+        # testing_bucket_indices_counter = 0
         for bucket_index, bucket in enumerate(self.bucket_manager.buckets):
             batch_count = int(math.ceil(len(bucket) / self.batch_size))
             for batch_index in range(batch_count):
                 self.buckets_indices.append(BucketBatchIndex(bucket_index, self.batch_size, batch_index))
-                testing_bucket_indices_counter += 1
+                # testing_bucket_indices_counter += 1
 
             # ↓以下はbucketごとのbatch件数があまりにも増えて混乱を招くので元に戻す
             # 　学習時はステップ数がランダムなので、同一画像が同一batch内にあってもそれほど悪影響はないであろう、と考えられる
@@ -1033,7 +1051,7 @@ class BaseDataset(torch.utils.data.Dataset):
 
         self.shuffle_buckets()
         self._length = len(self.buckets_indices)
-        logger.info(f"_length = {self._length}, len(self.buckets_indices) = {len(self.buckets_indices)}, test counter = {testing_bucket_indices_counter}")
+        # logger.info(f"_length = {self._length}, len(self.buckets_indices) = {len(self.buckets_indices)}, test counter = {testing_bucket_indices_counter}")
 
     def shuffle_buckets(self):
         # set random seed for this epoch
@@ -1064,11 +1082,26 @@ class BaseDataset(torch.utils.data.Dataset):
             ]
         )
 
-    def cache_latents(self, vae, vae_batch_size=1, cache_to_disk=False, is_main_process=True):
+    def cache_latents(self, vae, vae_batch_size=1, cache_to_disk=False):
         # マルチGPUには対応していないので、そちらはtools/cache_latents.pyを使うこと
+        distributed_state = PartialState()
         logger.info("caching latents.")
         image_infos = list(self.image_data.values())
         image_infos = list(filter(lambda info: info.latent_cache_checked == False, image_infos))
+        # image_infos = gather_object(image_infos)
+
+        class Image_Info_Key_Filter:
+            # Class to filter image infos by keys using hashing method mylist = list(set(mylist))
+            def __init__(self, info: ImageInfo):
+                self.info = info
+                self.image_key = info.image_key
+                
+            def __eq__(self, other):
+                return self.image_key == other.image_key
+
+            def __hash__(self):
+                return hash(self.image_key)
+                
 
         # sort by resolution
         image_infos.sort(key=lambda info: info.bucket_reso[0] * info.bucket_reso[1])
@@ -1091,6 +1124,7 @@ class BaseDataset(torch.utils.data.Dataset):
 
         batches: List[Tuple[Condition, List[ImageInfo]]] = []
         batch: List[ImageInfo] = []
+        needs_caching: List[ImageInfo] = [] 
         current_condition = None
 
         check_counter = 0
@@ -1108,9 +1142,7 @@ class BaseDataset(torch.utils.data.Dataset):
             # check disk cache exists and size of latents
             if cache_to_disk:
                 info.latents_npz = os.path.splitext(info.absolute_path)[0] + ".npz"
-                info.latent_cache_checked = True
-                if self.reg_infos is not None and info.image_key in self.reg_infos:
-                    self.reg_infos[info.image_key][0].latent_cache_checked = True
+                if self.reg_infos is not None and info.image_key in self.reg_infos and self.reg_infos[info.image_key][0].latents_npz is not None:
                     self.reg_infos[info.image_key][0].latents_npz = info.latents_npz
                 if check_counter < 5:
                     check_counter += 1
@@ -1121,10 +1153,31 @@ class BaseDataset(torch.utils.data.Dataset):
                 cache_available = is_disk_cached_latents_is_expected(
                     info.bucket_reso, info.latents_npz, subset.flip_aug, subset.alpha_mask
                 )
+                info.latent_cache_checked = cache_available
+                if self.reg_infos is not None and info.image_key in self.reg_infos:
+                    self.reg_infos[info.image_key][0].latent_cache_checked = cache_available
 
-                if cache_available:  # do not add to batch
-                    continue
+                if not cache_available:  # Filter for list of images that needs caching
+                    needs_caching.append(info)
+                
+        if cache_to_disk:
+            # As list of image info in each thread may be different in multithreaded env, collect list of image_infos that need batching for cache, and filter out elements with duplicated image_key (path)
+            # Needed to prevent accidental deadlock when writing cache file
+            temp_list: List[Image_Info_Key_Filter] = []
+            needs_caching = gather_object(needs_caching)
+            if distributed_state.is_main_process:
+                for info in needs_caching:
+                    temp_list.append(Image_Info_Key_Filter(info))
+                temp_list = list(set(temp_list))
+            distributed_state.wait_for_everyone()
+            temp_list = gather_object(temp_list)
+            needs_caching.clear()
+            for info in temp_list:
+                    needs_caching.append(info.info)
+            needs_caching.sort(key=lambda info: info.bucket_reso[0] * info.bucket_reso[1])
+            del  temp_list, image_infos
 
+        for info in needs_caching:
             # if batch is not empty and condition is changed, flush the batch. Note that current_condition is not None if batch is not empty
             condition = Condition(info.bucket_reso, subset.flip_aug, subset.alpha_mask, subset.random_crop)
             if len(batch) > 0 and current_condition != condition:
@@ -1143,22 +1196,27 @@ class BaseDataset(torch.utils.data.Dataset):
         if len(batch) > 0:
             batches.append((current_condition, batch))
 
-        if cache_to_disk and not is_main_process:  # if cache to disk, don't cache latents in non-main process, set to info only
-            return
-
-        # iterate batches: batch doesn't have image, image will be loaded in cache_batch_latents and discarded
-        logger.info("caching latents...")
-        for condition, batch in tqdm(batches, smoothing=1, total=len(batches)):
-            cache_batch_latents(vae, cache_to_disk, batch, condition.flip_aug, condition.alpha_mask, condition.random_crop)
-            if self.reg_infos is not None:
-                for info in batch:
-                    if info.image_key in self.reg_infos:
-                        self.reg_infos[info.image_key][0].latents_npz = info.latents_npz
-                        self.reg_infos[info.image_key][0].latents_original_size = info.latents_original_size
-                        self.reg_infos[info.image_key][0].latents_crop_ltrb = info.latents_crop_ltrb
-                        self.reg_infos[info.image_key][0].latents_crop_ltrb = info.latents_flipped
-                        self.reg_infos[info.image_key][0].latents = info.latents
-                        self.reg_infos[info.image_key][0].alpha_mask = info.alpha_mask
+        if cache_to_disk:  # Since filtered for unique image_keys, execute distributed caching
+            with torch.no_grad():
+                with distributed_state.split_between_processes(batches) as sub_batches:
+                    logger.info("caching latents...")
+                    for condition, batch in tqdm(batches, smoothing=1, total=len(batches)):
+                        cache_batch_latents(vae, cache_to_disk, batch, condition.flip_aug, condition.alpha_mask, condition.random_crop)
+        else:
+            # As not caching to disk, each process individually update internal image info
+            logger.info("caching latents...")
+            for condition, batch in tqdm(batches, smoothing=1, total=len(batches)):
+                cache_batch_latents(vae, cache_to_disk, batch, condition.flip_aug, condition.alpha_mask, condition.random_crop)
+                if self.reg_infos is not None:
+                    for info in batch:
+                        if info.image_key in self.reg_infos:
+                            self.reg_infos[info.image_key][0].latents_npz = info.latents_npz
+                            self.reg_infos[info.image_key][0].latents_original_size = info.latents_original_size
+                            self.reg_infos[info.image_key][0].latents_crop_ltrb = info.latents_crop_ltrb
+                            self.reg_infos[info.image_key][0].latents_crop_ltrb = info.latents_flipped
+                            self.reg_infos[info.image_key][0].latents = info.latents
+                            self.reg_infos[info.image_key][0].alpha_mask = info.alpha_mask
+                            self.reg_infos[info.image_key][0].latent_cache_checked = True
 
     
     # weight_dtypeを指定するとText Encoderそのもの、およひ出力がweight_dtypeになる
