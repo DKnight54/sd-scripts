@@ -734,6 +734,8 @@ class BaseDataset(torch.utils.data.Dataset):
                 '''
                 for _ in range(num_epochs):
                     self.current_epoch += 1
+                    '''
+                    # Not working
                     if self.reg_reload and self.reg_infos is not None and len(self.reg_infos) > 0:
                         self.bucket_manager = None
                         self.incremental_reg_load(make_bucket = False)
@@ -748,7 +750,7 @@ class BaseDataset(torch.utils.data.Dataset):
                     vae.to("cpu")
                     clean_memory_on_device(distributed_state.device)
                     distributed_state.wait_for_everyone()
-                    
+                    '''
                 self.shuffle_buckets()
                 # self.current_epoch seem to be set to 0 again in the next epoch. it may be caused by skipped_dataloader?
             else:
