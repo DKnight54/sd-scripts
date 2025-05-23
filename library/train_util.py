@@ -1197,12 +1197,25 @@ class BaseDataset(torch.utils.data.Dataset):
         if len(batch) > 0:
             batches.append((current_condition, batch))
 
+        output = []
         if cache_to_disk:  # Since filtered for unique image_keys, execute distributed caching
             with torch.no_grad():
                 with distributed_state.split_between_processes(batches) as sub_batches:
                     logger.info("caching latents...")
                     for condition, batch in tqdm(batches, smoothing=1, total=len(batches)):
                         cache_batch_latents(vae, cache_to_disk, batch, condition.flip_aug, condition.alpha_mask, condition.random_crop)
+                        for info in batch:
+                            output.append(info)
+            output = gather_objects(output)
+            for info in output:
+                if info.image_key in self.reg_infos:
+                    self.reg_infos[info.image_key][0].latents_npz = info.latents_npz
+                    self.reg_infos[info.image_key][0].latents_original_size = info.latents_original_size
+                    self.reg_infos[info.image_key][0].latents_crop_ltrb = info.latents_crop_ltrb
+                    self.reg_infos[info.image_key][0].latents_crop_ltrb = info.latents_flipped
+                    self.reg_infos[info.image_key][0].latents = info.latents
+                    self.reg_infos[info.image_key][0].alpha_mask = info.alpha_mask
+                    self.reg_infos[info.image_key][0].latent_cache_checked = True
         else:
             # As not caching to disk, each process individually update internal image info
             logger.info("caching latents...")
