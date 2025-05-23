@@ -1096,22 +1096,9 @@ class BaseDataset(torch.utils.data.Dataset):
         distributed_state = PartialState()
         logger.info("caching latents.")
         image_infos = list(self.image_data.values())
+        image_infos = gather_object(image_infos)
         image_infos = list(filter(lambda info: info.latent_cache_checked == False, image_infos))
         # image_infos = gather_object(image_infos)
-
-        class Image_Info_Key_Filter:
-            # Class to filter image infos by keys using hashing method mylist = list(set(mylist))
-            def __init__(self, info: ImageInfo):
-                self.info = info
-                self.image_key = info.image_key
-                
-            def __eq__(self, other):
-                return self.image_key == other.image_key
-
-            def __hash__(self):
-                return hash(self.image_key)
-                
-
         # sort by resolution
         image_infos.sort(key=lambda info: info.bucket_reso[0] * info.bucket_reso[1])
 
@@ -1133,54 +1120,28 @@ class BaseDataset(torch.utils.data.Dataset):
 
         batches: List[Tuple[Condition, List[ImageInfo]]] = []
         batch: List[ImageInfo] = []
-        needs_caching: List[ImageInfo] = [] 
         current_condition = None
 
         logger.info("checking cache validity...")
         for info in tqdm(image_infos):
-            
             subset = self.image_to_subset[info.image_key]
 
             if info.latents_npz is not None:  # fine tuning dataset
-                info.latent_cache_checked = True
-                if self.reg_infos is not None and info.image_key in self.reg_infos:
-                    self.reg_infos[info.image_key][0].latent_cache_checked = True
                 continue
 
             # check disk cache exists and size of latents
             if cache_to_disk:
                 info.latents_npz = os.path.splitext(info.absolute_path)[0] + ".npz"
-                if self.reg_infos is not None and info.image_key in self.reg_infos and self.reg_infos[info.image_key][0].latents_npz is not None:
-                    self.reg_infos[info.image_key][0].latents_npz = info.latents_npz
+                if not is_main_process:  # store to info only
+                    continue
 
                 cache_available = is_disk_cached_latents_is_expected(
                     info.bucket_reso, info.latents_npz, subset.flip_aug, subset.alpha_mask
                 )
-                info.latent_cache_checked = cache_available
-                if self.reg_infos is not None and info.image_key in self.reg_infos:
-                    self.reg_infos[info.image_key][0].latent_cache_checked = cache_available
 
-                if not cache_available:  # Filter for list of images that needs caching
-                    needs_caching.append(info)
-                
-        if cache_to_disk:
-            # As list of image info in each thread may be different in multithreaded env, collect list of image_infos that need batching for cache, and filter out elements with duplicated image_key (path)
-            # Needed to prevent accidental deadlock when writing cache file
-            temp_list: List[Image_Info_Key_Filter] = []
-            needs_caching = gather_object(needs_caching)
-            if distributed_state.is_main_process:
-                for info in needs_caching:
-                    temp_list.append(Image_Info_Key_Filter(info))
-                temp_list = list(set(temp_list))
-            distributed_state.wait_for_everyone()
-            temp_list = gather_object(temp_list)
-            needs_caching.clear()
-            for info in temp_list:
-                    needs_caching.append(info.info)
-            needs_caching.sort(key=lambda info: info.bucket_reso[0] * info.bucket_reso[1])
-            del  temp_list
+                if cache_available:  # do not add to batch
+                    continue
 
-        for info in needs_caching:
             # if batch is not empty and condition is changed, flush the batch. Note that current_condition is not None if batch is not empty
             condition = Condition(info.bucket_reso, subset.flip_aug, subset.alpha_mask, subset.random_crop)
             if len(batch) > 0 and current_condition != condition:
@@ -1199,40 +1160,23 @@ class BaseDataset(torch.utils.data.Dataset):
         if len(batch) > 0:
             batches.append((current_condition, batch))
 
-        output = []
-        if cache_to_disk:  # Since filtered for unique image_keys, execute distributed caching
-            with torch.no_grad():
-                with distributed_state.split_between_processes(batches) as sub_batches:
-                    logger.info("caching latents...")
-                    for condition, batch in tqdm(batches, smoothing=1, total=len(batches)):
-                        cache_batch_latents(vae, cache_to_disk, batch, condition.flip_aug, condition.alpha_mask, condition.random_crop)
-                        for info in batch:
-                            output.append(info)
-            output = gather_object(output)
-            for info in output:
-                if info.image_key in self.reg_infos:
-                    self.reg_infos[info.image_key][0].latents_npz = info.latents_npz
-                    self.reg_infos[info.image_key][0].latents_original_size = info.latents_original_size
-                    self.reg_infos[info.image_key][0].latents_crop_ltrb = info.latents_crop_ltrb
-                    self.reg_infos[info.image_key][0].latents_crop_ltrb = info.latents_flipped
-                    self.reg_infos[info.image_key][0].latents = info.latents
-                    self.reg_infos[info.image_key][0].alpha_mask = info.alpha_mask
-                    self.reg_infos[info.image_key][0].latent_cache_checked = True
-        else:
-            # As not caching to disk, each process individually update internal image info
-            logger.info("caching latents...")
-            for condition, batch in tqdm(batches, smoothing=1, total=len(batches)):
-                cache_batch_latents(vae, cache_to_disk, batch, condition.flip_aug, condition.alpha_mask, condition.random_crop)
-                if self.reg_infos is not None:
-                    for info in batch:
-                        if info.image_key in self.reg_infos:
-                            self.reg_infos[info.image_key][0].latents_npz = info.latents_npz
-                            self.reg_infos[info.image_key][0].latents_original_size = info.latents_original_size
-                            self.reg_infos[info.image_key][0].latents_crop_ltrb = info.latents_crop_ltrb
-                            self.reg_infos[info.image_key][0].latents_crop_ltrb = info.latents_flipped
-                            self.reg_infos[info.image_key][0].latents = info.latents
-                            self.reg_infos[info.image_key][0].alpha_mask = info.alpha_mask
-                            self.reg_infos[info.image_key][0].latent_cache_checked = True
+        if cache_to_disk and not distributed_state.is_main_process:  # if cache to disk, don't cache latents in non-main process, set to info only
+            return
+
+        # iterate batches: batch doesn't have image, image will be loaded in cache_batch_latents and discarded
+        logger.info("caching latents...")
+        for condition, batch in tqdm(batches, smoothing=1, total=len(batches)):
+            cache_batch_latents(vae, cache_to_disk, batch, condition.flip_aug, condition.alpha_mask, condition.random_crop)
+            if self.reg_infos is not None:
+                for info in batch:
+                    if info.image_key in self.reg_infos:
+                        self.reg_infos[info.image_key][0].latents_npz = info.latents_npz
+                        self.reg_infos[info.image_key][0].latents_original_size = info.latents_original_size
+                        self.reg_infos[info.image_key][0].latents_crop_ltrb = info.latents_crop_ltrb
+                        self.reg_infos[info.image_key][0].latents_crop_ltrb = info.latents_flipped
+                        self.reg_infos[info.image_key][0].latents = info.latents
+                        self.reg_infos[info.image_key][0].alpha_mask = info.alpha_mask
+                        self.reg_infos[info.image_key][0].latent_cache_checked = True
 
     
     # weight_dtypeを指定するとText Encoderそのもの、およひ出力がweight_dtypeになる
@@ -2854,14 +2798,18 @@ def cache_batch_latents(
             raise RuntimeError(f"NaN detected in latents: {info.absolute_path}")
 
         if cache_to_disk:
-            save_latents_to_disk(
-                info.latents_npz,
-                latent,
-                info.latents_original_size,
-                info.latents_crop_ltrb,
-                flipped_latent,
-                alpha_mask,
+            cache_available = is_disk_cached_latents_is_expected(
+                info.bucket_reso, info.latents_npz, subset.flip_aug, subset.alpha_mask
             )
+            if not cache_available:
+                save_latents_to_disk(
+                    info.latents_npz,
+                    latent,
+                    info.latents_original_size,
+                    info.latents_crop_ltrb,
+                    flipped_latent,
+                    alpha_mask,
+                )
         else:
             info.latents = latent
             if flip_aug:
