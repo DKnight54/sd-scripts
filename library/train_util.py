@@ -1824,36 +1824,9 @@ class DreamBoothDataset(BaseDataset):
         self.num_train_images = num_train_images
 
         logger.info(f"{num_reg_images} reg images.")
-        '''
-        
-        if num_train_images < num_reg_images:
-            random.shuffle(self.reg_infos)
-            logger.warning("some of reg images are not used / 正則化画像の数が多いので、一部使用されない正則化画像があります")
 
-        if num_reg_images == 0:
-            logger.warning("no regularization images / 正則化画像が見つかりませんでした")
-        else:
-            # num_repeatsを計算する：どうせ大した数ではないのでループで処理する
-            temp_reg_infos = copy.deepcopy(self.reg_infos)
-            n = 0
-            reg_img_log = f"\nDataset seed: {self.seed}"
-            while n < num_train_images:
-                for info, subset in temp_reg_infos:
-                    if info.image_key in self.image_data:
-                        info.num_repeats += 1  # rewrite registered info
-                    else:
-                        self.register_image(info, subset)
-                    reg_img_log += f"\nRegistering image: {info.absolute_path}, count: {info.num_repeats}"
-                    n += 1
-                    if n >= num_train_images:
-                        break
-                random.shuffle(temp_reg_infos)
-            logger.info(reg_img_log)
-            del temp_reg_infos
-        '''
         self.num_reg_images = num_reg_images
-        #random.shuffle(self.reg_infos_index)
-        #self.subset_loaded_count()
+
 
     def subset_loaded_count(self):
         count_str = ""
@@ -1906,24 +1879,8 @@ class DreamBoothDataset(BaseDataset):
                 reg_img_log += f"\nRegistering image: {info.absolute_path}, count: {info.num_repeats}"
             '''
             n += 1
-            
-            '''
-            for reg_key in self.reg_infos_index:
-                info, subset =  temp_reg_infos[reg_key]
 
-               
-                if info.image_key in self.image_data:
-                    info.num_repeats += 1  # rewrite registered info
-                else:
-                    self.register_image(info, subset)
-                if n < 5:
-                    reg_img_log += f"\nRegistering image: {info.absolute_path}, count: {info.num_repeats}"
-                n += 1
-                if n >= self.num_train_images:
-                    break
-            random.shuffle(self.reg_infos_index)
-            '''
-        logger.info(reg_img_log)
+        # logger.info(reg_img_log)
         self.subset_loaded_count()
         self.bucket_manager = None
         if make_bucket:
