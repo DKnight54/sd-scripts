@@ -1163,7 +1163,7 @@ class NetworkTrainer:
                 
            
             # Reloading reg images here and checking cache before train_dataloader's workers are reinitialized
-            '''
+            
             if args.incremental_reg_reload and epoch + 1 < num_train_epochs:
                 train_dataset_group.incremental_reg_load(True)
                 if cache_latents:
@@ -1197,7 +1197,7 @@ class NetworkTrainer:
                     persistent_workers=args.persistent_data_loader_workers,
                 )
                 sharded_dataloader = accelerator.prepare(train_dataloader)
-            '''
+            
                 
 
             # end of epoch
