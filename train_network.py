@@ -873,6 +873,9 @@ class NetworkTrainer:
             
         if args.incremental_reg_reload:
             train_dataset_group.set_reg_reload(args.incremental_reg_reload)
+            if args.persistent_data_loader_workers:
+                logger.info("persistent_data_loader_workers has been set to False because incremental_reg_reload is enabled.")
+                args.persistent_data_loader_workers = False
         if args.randomized_regularization_image:
             train_dataset_group.set_reg_randomize(args.randomized_regularization_image)
             # logger.warning("incremental_reg_reload = True. Incremental reloading of Regularization Images requires persistent_data_loader_workers = false, overriding.")
