@@ -872,16 +872,21 @@ class NetworkTrainer:
         # For --sample_at_first
         if args.sample_at_first == True:
             self.sample_images(accelerator, args, 0, 0, accelerator.device, vae, tokenizer, text_encoder, unet)
+            
         if args.incremental_reg_reload:
-            logger.warning("incremental_reg_reload = True. Incremental reloading of Regularization Images requires persistent_data_loader_workers = false, overriding.")
-            args.persistent_data_loader_workers = False
+            train_dataset_group.set_reg_reload(incremental_reg_reload):
+        if args.randomized_regularization_image:
+            train_dataset_group.set_reg_randomize(args.randomized_regularization_image)
+            # logger.warning("incremental_reg_reload = True. Incremental reloading of Regularization Images requires persistent_data_loader_workers = false, overriding.")
+            # args.persistent_data_loader_workers = False
         
         if cache_latents:
+            train_dataset_group.set_latent_cache_params(vae_dtype, cache_latents, vae, args.vae_batch_size, args.cache_latents_to_disk)
             vae.to(accelerator.device, dtype=vae_dtype)
             vae.requires_grad_(False)
             vae.eval()
             with torch.no_grad():
-                train_dataset_group.cache_latents(vae, args.vae_batch_size, args.cache_latents_to_disk, accelerator.is_main_process)
+                train_dataset_group.cache_latents(vae, args.vae_batch_size, args.cache_latents_to_disk)
             vae.to("cpu")
             clean_memory_on_device(accelerator.device)
 
@@ -908,7 +913,7 @@ class NetworkTrainer:
             for skip_epoch in range(epoch_to_start):  # skip epochs
                 logger.info(f"skipping epoch {skip_epoch+1} because initial_step (multiplied) is {initial_step}")
                 # current_epoch.value = skip_epoch+1
-                train_dataset_group.incremental_reg_load(True)
+                # train_dataset_group.incremental_reg_load(True)
                 logger.info(f"len(train_dataset_group) = {len(train_dataset_group)}")
                 initial_step -= num_of_steps
                 
@@ -1160,7 +1165,7 @@ class NetworkTrainer:
                 
            
             # Reloading reg images here and checking cache before train_dataloader's workers are reinitialized
-            
+            '''
             if args.incremental_reg_reload and epoch + 1 < num_train_epochs:
                 train_dataset_group.incremental_reg_load(True)
                 if cache_latents:
@@ -1194,6 +1199,7 @@ class NetworkTrainer:
                     persistent_workers=args.persistent_data_loader_workers,
                 )
                 sharded_dataloader = accelerator.prepare(train_dataloader)
+            '''
                 
 
             # end of epoch
