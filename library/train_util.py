@@ -3831,7 +3831,12 @@ def add_training_arguments(parser: argparse.ArgumentParser, support_dreambooth: 
     parser.add_argument(
         "--incremental_reg_load",
         action="store_true",
-        help="Forces reload of regularization images. Useful if there are more regularization images than training images",
+        help="Forces reload of regularization images at each Epoch. Will sequentially load regularization images unless '--randomized_regularization_image' is set. Useful if there are more regularization images than training images",
+    )
+    parser.add_argument(
+        "--randomized_regularization_image",
+        action="store_true",
+        help="Shuffles regularization images to even out distribution. Useful if there are more regularization images than training images",
     )
     
 
