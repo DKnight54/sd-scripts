@@ -705,6 +705,10 @@ class BaseDataset(torch.utils.data.Dataset):
 
     def set_reg_randomize(self, reg_randomize = False):
         self.reg_randomize = reg_randomize
+        # As first set of data is loaded before the first opportunity to shuffle, will need to force reset self.reg_infos_index_traverser and reinitialize dataset
+        self.reg_infos_index_traverser = 0
+        self.bucket_manager = None
+        self.incremental_reg_load(True)
 
     def set_reg_reload(self, reg_reload):
         self.reg_reload = reg_reload
@@ -2332,7 +2336,8 @@ class DatasetGroup(torch.utils.data.ConcatDataset):
             dataset.set_latent_cache_params(vae_dtype, use_cache_latents, vae, vae_batch_size, cache_to_disk)
     
     def set_reg_randomize(self, reg_randomize = False):
-        for dataset in self.datasets:
+        for i, dataset in enumerate(self.datasets):
+            logger.info(f"[Dataset {i}]")
             dataset.set_reg_randomize(reg_randomize)
     
     def make_buckets(self):
@@ -2755,10 +2760,9 @@ def cache_batch_latents(
             raise RuntimeError(f"NaN detected in latents: {info.absolute_path}")
 
         if cache_to_disk:
-            cache_available = is_disk_cached_latents_is_expected(
-                info.bucket_reso, info.latents_npz, subset.flip_aug, subset.alpha_mask
-            )
-            if not cache_available:
+            if not is_disk_cached_latents_is_expected(
+                info.bucket_reso, info.latents_npz, flip_aug, use_alpha_mask
+            ):
                 save_latents_to_disk(
                     info.latents_npz,
                     latent,
