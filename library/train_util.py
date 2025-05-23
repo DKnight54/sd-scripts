@@ -734,12 +734,12 @@ class BaseDataset(torch.utils.data.Dataset):
                 '''
                 for _ in range(num_epochs):
                     self.current_epoch += 1
-                    if self.reg_reload and self.reg_infos is not None and len(reg_infos) > 0:
+                    if self.reg_reload and self.reg_infos is not None and len(self.reg_infos) > 0:
                         self.bucket_manager = None
                         self.incremental_reg_load(make_bucket = False)
-                if self.reg_reload and self.reg_infos is not None and len(reg_infos) > 0:
+                if self.reg_reload and self.reg_infos is not None and len(self.reg_infos) > 0:
                     self.make_buckets()
-                if self.use_cache_latents and self.reg_reload and self.reg_infos is not None and len(reg_infos) > 0:
+                if self.use_cache_latents and self.reg_reload and self.reg_infos is not None and len(self.reg_infos) > 0:
                     vae.to(distributed_state.device, dtype=self.vae_dtype)
                     vae.requires_grad_(False)
                     vae.eval()
