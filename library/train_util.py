@@ -1154,8 +1154,6 @@ class BaseDataset(torch.utils.data.Dataset):
                 if check_counter < 5:
                     check_counter += 1
                     logger.info(f'{info.latents_npz}')
-                if not is_main_process:  # store to info only
-                    continue
 
                 cache_available = is_disk_cached_latents_is_expected(
                     info.bucket_reso, info.latents_npz, subset.flip_aug, subset.alpha_mask
