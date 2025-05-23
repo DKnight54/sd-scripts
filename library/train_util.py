@@ -663,6 +663,7 @@ class BaseDataset(torch.utils.data.Dataset):
         # lists for incremental loading of regularization images
         self.reg_infos = None
         self.reg_infos_index = None
+        self.reg_randomize = False
 
         # Handling cache latents during automatic update
         self.use_cache_latents = False
@@ -701,6 +702,9 @@ class BaseDataset(torch.utils.data.Dataset):
 
     def set_seed(self, seed):
         self.seed = seed
+
+    def set_reg_randomize(self, reg_randomize = False):
+        self.reg_randomize = reg_randomize
 
     def incremental_reg_load(self, make_bucket = False): # Placeholder method, does nothing unless overridden in subclasses.
         return
@@ -1689,8 +1693,10 @@ class DreamBoothDataset(BaseDataset):
         self.latents_cache = None
         self.reg_infos: Dict[str, Tuple[ImageInfo, DreamBoothSubset]] = {}
         self.reg_infos_index: List[str] = []
+        self.reg_infos_index_traverser = 0 # Stored index of reg_infos_index
 
         self.enable_bucket = enable_bucket
+
         if self.enable_bucket:
             min_bucket_reso, max_bucket_reso = self.adjust_min_max_bucket_reso_by_steps(
                 resolution, min_bucket_reso, max_bucket_reso, bucket_reso_steps
@@ -1863,6 +1869,7 @@ class DreamBoothDataset(BaseDataset):
 
         logger.info(f"{num_reg_images} reg images.")
         '''
+        
         if num_train_images < num_reg_images:
             random.shuffle(self.reg_infos)
             logger.warning("some of reg images are not used / 正則化画像の数が多いので、一部使用されない正則化画像があります")
@@ -1890,7 +1897,6 @@ class DreamBoothDataset(BaseDataset):
         '''
         self.num_reg_images = num_reg_images
         #random.shuffle(self.reg_infos_index)
-        self.temp_index=0
         #self.subset_loaded_count()
 
     def subset_loaded_count(self):
@@ -1903,7 +1909,7 @@ class DreamBoothDataset(BaseDataset):
                 counter += self.image_data[img_key].num_repeats
             count_str += f"{counter}/{subset.img_count * subset.num_repeats}"
             count_str += f"\nSubset dir: {subset.image_dir}" if subset.image_dir is not None else ""
-        count_str += f"\n\n"
+        count_str += f"\n"
         logger.info(count_str)
     
     def incremental_reg_load(self, make_bucket = False):
@@ -1923,21 +1929,26 @@ class DreamBoothDataset(BaseDataset):
         temp_reg_infos = copy.deepcopy(self.reg_infos)
         n = 0
         first_loop = True
-        logger.info(f"self.reg_infos_index at: {self.temp_index}\n reg_infos_index len = {len(self.reg_infos_index)}")
+        logger.info(f"self.reg_infos_index_traverser at: {self.reg_infos_index_traverser}\n reg_infos_index len = {len(self.reg_infos_index)}")
         reg_img_log = f"\nDataset seed: {self.seed}"
-        start_index = self.temp_index
+        start_index = self.reg_infos_index_traverser
+                   
         while n < self.num_train_images :
-            info, subset = temp_reg_infos[self.reg_infos_index[self.temp_index]]
+            if self.reg_randomize and self.reg_infos_index_traverser == 0:
+                random.shuffle(self.reg_infos_index)
+            info, subset = temp_reg_infos[self.reg_infos_index[self.reg_infos_index_traverser]]
             if info.image_key in self.image_data:
                 info.num_repeats += 1  # rewrite registered info
             else:
                 self.register_image(info, subset)
             
-            self.temp_index += 1
-            if self.temp_index % len(self.reg_infos_index) == 0:
-                self.temp_index = 0
+            self.reg_infos_index_traverser += 1
+            if self.reg_infos_index_traverser % len(self.reg_infos_index) == 0:
+                self.reg_infos_index_traverser = 0
+            '''
             if n < 5:
                 reg_img_log += f"\nRegistering image: {info.absolute_path}, count: {info.num_repeats}"
+            '''
             n += 1
             
             '''
@@ -1957,11 +1968,12 @@ class DreamBoothDataset(BaseDataset):
             random.shuffle(self.reg_infos_index)
             '''
         logger.info(reg_img_log)
+        self.subset_loaded_count()
         self.bucket_manager = None
         if make_bucket:
             self.make_buckets()
         del temp_reg_infos
-        self.subset_loaded_count()
+        
 
 class FineTuningDataset(BaseDataset):
     def __init__(
@@ -2315,9 +2327,9 @@ class ControlNetDataset(BaseDataset):
         self.dreambooth_dataset_delegate.incremental_reg_load()
         if make_bucket:
             self.make_buckets()
-        
-    def cache_latents(self, vae, vae_batch_size=1, cache_to_disk=False, is_main_process=True):
-        return self.dreambooth_dataset_delegate.cache_latents(vae, vae_batch_size, cache_to_disk, is_main_process)
+    
+    def cache_latents(self, vae, vae_batch_size=1, cache_to_disk=False):
+        return self.dreambooth_dataset_delegate.cache_latents(vae, vae_batch_size, cache_to_disk)
 
     def __len__(self):
         return self.dreambooth_dataset_delegate.__len__()
@@ -2400,22 +2412,30 @@ class DatasetGroup(torch.utils.data.ConcatDataset):
 
     def set_reg_reload(self, reg_reload):
         for dataset in self.datasets:
-            dataset.reg_reload.value = reg_reload
-
-    def make_buckets(self):
+            dataset.set_reg_reload(reg_reload)
+            
+    def set_latent_cache_params(self, vae_dtype, use_cache_latents = False, vae = None, vae_batch_size = 1, cache_to_disk = False):
         for dataset in self.datasets:
+            dataset.set_latent_cache_params(self, vae_dtype, use_cache_latents, vae, vae_batch_size, cache_to_disk)
+    
+    def set_reg_randomize(self, reg_randomize = False):
+        for dataset in self.datasets:
+            dataset.set_reg_randomize(reg_randomize)
+    
+    def make_buckets(self):
+        for i, dataset in enumerate(self.datasets):
+            logger.info(f"[Dataset {i}]")
             dataset.make_buckets()
         self.cumulative_sizes = self.cumsum(self.datasets)
-
 
     def enable_XTI(self, *args, **kwargs):
         for dataset in self.datasets:
             dataset.enable_XTI(*args, **kwargs)
 
-    def cache_latents(self, vae, vae_batch_size=1, cache_to_disk=False, is_main_process=True):
+    def cache_latents(self, vae, vae_batch_size=1, cache_to_disk=False):
         for i, dataset in enumerate(self.datasets):
             logger.info(f"[Dataset {i}]")
-            dataset.cache_latents(vae, vae_batch_size, cache_to_disk, is_main_process)
+            dataset.cache_latents(vae, vae_batch_size, cache_to_disk)
 
     def cache_text_encoder_outputs(
         self, tokenizers, text_encoders, device, weight_dtype, cache_to_disk=False, is_main_process=True
@@ -2456,7 +2476,8 @@ class DatasetGroup(torch.utils.data.ConcatDataset):
             dataset.disable_token_padding()
 
     def incremental_reg_load(self, make_bucket = False):
-        for dataset in self.datasets:
+        for i, dataset in enumerate(self.datasets):
+            logger.info(f"[Dataset {i}]")
             dataset.incremental_reg_load(make_bucket)
         if make_bucket:
             self.cumulative_sizes = self.cumsum(self.datasets)
