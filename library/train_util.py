@@ -2419,7 +2419,7 @@ class DatasetGroup(torch.utils.data.ConcatDataset):
             
     def set_latent_cache_params(self, vae_dtype, use_cache_latents = False, vae = None, vae_batch_size = 1, cache_to_disk = False):
         for dataset in self.datasets:
-            dataset.set_latent_cache_params(self, vae_dtype, use_cache_latents, vae, vae_batch_size, cache_to_disk)
+            dataset.set_latent_cache_params(vae_dtype, use_cache_latents, vae, vae_batch_size, cache_to_disk)
     
     def set_reg_randomize(self, reg_randomize = False):
         for dataset in self.datasets:
