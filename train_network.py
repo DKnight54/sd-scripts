@@ -255,6 +255,24 @@ class NetworkTrainer:
 
         # 差分追加学習のためにモデルを読み込む
         sys.path.append(os.path.dirname(__file__))
+
+        if cache_latents:
+            vae.to(accelerator.device, dtype=vae_dtype)
+            vae.requires_grad_(False)
+            vae.eval()
+            with torch.no_grad():
+                train_dataset_group.cache_latents(vae, args.vae_batch_size, args.cache_latents_to_disk, accelerator.is_main_process)
+            vae.to("cpu")
+            clean_memory_on_device(accelerator.device)
+
+            accelerator.wait_for_everyone()
+    
+            # 必要ならテキストエンコーダーの出力をキャッシュする: Text Encoderはcpuまたはgpuへ移される
+            # cache text encoder outputs if needed: Text Encoder is moved to cpu or gpu
+        self.cache_text_encoder_outputs_if_needed(
+            args, accelerator, unet, vae, tokenizers, text_encoders, train_dataset_group, weight_dtype
+        )        
+        
         accelerator.print("import network module:", args.network_module)
         network_module = importlib.import_module(args.network_module)
 
@@ -365,8 +383,10 @@ class NetworkTrainer:
         # DataLoaderのプロセス数：0 は persistent_workers が使えないので注意
         n_workers = min(args.max_data_loader_n_workers, os.cpu_count())  # cpu_count or max_data_loader_n_workers
 
-        '''
-        # Due to batch size 1 and batches handled in train_dataset_group, len(train_dataset_group) = len(train_dataloader) and can be used for calculations
+        ds_for_collator = train_dataset_group if args.max_data_loader_n_workers == 0 else None
+        #current_epoch.value = epoch_to_start
+        #current_step.value = global_step
+        collator = train_util.collator_class(current_epoch, current_step, ds_for_collator)
         train_dataloader = torch.utils.data.DataLoader(
             train_dataset_group,
             batch_size=1,
@@ -375,12 +395,12 @@ class NetworkTrainer:
             num_workers=n_workers,
             persistent_workers=args.persistent_data_loader_workers,
         )
-        '''
-        num_of_steps = len(train_dataset_group)
+
+        num_of_steps = len(train_dataset_group) # train_dataloader batch size is 1, so this is equivalent to len(train_dataloader)
         # 学習ステップ数を計算する
         if args.max_train_epochs is not None:
             args.max_train_steps = args.max_train_epochs * math.ceil(
-                num_of_steps/ accelerator.num_processes / args.gradient_accumulation_steps
+                len(train_dataloader)/ accelerator.num_processes / args.gradient_accumulation_steps
             )
             accelerator.print(
                 f"override steps. steps for {args.max_train_epochs} epochs is / 指定エポックまでのステップ数: {args.max_train_steps}"
@@ -437,8 +457,8 @@ class NetworkTrainer:
                 text_encoder2=text_encoders[1] if train_text_encoder and len(text_encoders) > 1 else None,
                 network=network,
             )
-            ds_model, optimizer, lr_scheduler = accelerator.prepare(
-                ds_model, optimizer, lr_scheduler
+            ds_model, optimizer, train_dataloader, lr_scheduler = accelerator.prepare(
+                ds_model, optimizer, train_dataloader, lr_scheduler
             )
             training_model = ds_model
         else:
@@ -455,8 +475,8 @@ class NetworkTrainer:
             else:
                 pass  # if text_encoder is not trained, no need to prepare. and device and dtype are already set
 
-            network, optimizer, lr_scheduler = accelerator.prepare(
-                network, optimizer, lr_scheduler
+            network, optimizer, train_dataloader, lr_scheduler = accelerator.prepare(
+                network, optimizer, train_dataloader, lr_scheduler
             )
             training_model = network
 
@@ -539,7 +559,7 @@ class NetworkTrainer:
         train_util.resume_from_local_or_hf_if_specified(accelerator, args)
 
         # epoch数を計算する
-        num_update_steps_per_epoch = math.ceil(num_of_steps/ args.gradient_accumulation_steps)
+        num_update_steps_per_epoch = math.ceil(len(train_dataloader) / args.gradient_accumulation_steps)
         num_train_epochs = math.ceil(args.max_train_steps / num_update_steps_per_epoch)
         if (args.save_n_epoch_ratio is not None) and (args.save_n_epoch_ratio > 0):
             args.save_every_n_epochs = math.floor(num_train_epochs / args.save_n_epoch_ratio) or 1
@@ -884,25 +904,8 @@ class NetworkTrainer:
             logger.warning("incremental_reg_reload = True. Incremental reloading of Regularization Images requires persistent_data_loader_workers = false, overriding.")
             args.persistent_data_loader_workers = False
         
-        if cache_latents:
-            vae.to(accelerator.device, dtype=vae_dtype)
-            vae.requires_grad_(False)
-            vae.eval()
-            with torch.no_grad():
-                train_dataset_group.cache_latents(vae, args.vae_batch_size, args.cache_latents_to_disk, accelerator.is_main_process)
-            vae.to("cpu")
-            clean_memory_on_device(accelerator.device)
-
-            accelerator.wait_for_everyone()
-    
-            # 必要ならテキストエンコーダーの出力をキャッシュする: Text Encoderはcpuまたはgpuへ移される
-            # cache text encoder outputs if needed: Text Encoder is moved to cpu or gpu
-        self.cache_text_encoder_outputs_if_needed(
-            args, accelerator, unet, vae, tokenizers, text_encoders, train_dataset_group, weight_dtype
-        )        
-        
-        
         # training loop
+        dataset_was_modified_during_skip = False # Flag to track if dataset was modified during epoch skipping
         if initial_step > 0:  # only if skip_until_initial_step is specified
             
             if args.incremental_reg_reload:
@@ -917,6 +920,7 @@ class NetworkTrainer:
                 logger.info(f"skipping epoch {skip_epoch+1} because initial_step (multiplied) is {initial_step}")
                 # current_epoch.value = skip_epoch+1
                 train_dataset_group.incremental_reg_load(True)
+                dataset_was_modified_during_skip = True
                 initial_step -= num_of_steps
                 
             # Start cache latents here if necessary after train_datasetgroup has been finalized for the first run.
@@ -936,22 +940,38 @@ class NetworkTrainer:
             self.cache_text_encoder_outputs_if_needed(
                 args, accelerator, unet, vae, tokenizers, text_encoders, train_dataset_group, weight_dtype
             )
+            accelerator.wait_for_everyone() # Ensure all processes sync after potential dataset/cache changes in initial_step block
+            
+            if dataset_was_modified_during_skip:
+                logger.info("Recreating dataloader due to dataset modification during epoch skipping for resume/initial_step.")
+                # Ensure n_workers, current_epoch, current_step, and ds_for_collator are correctly scoped or redefined if necessary.
+                # n_workers is defined earlier. current_epoch and current_step are Value objects.
+                # ds_for_collator might need to be redefined based on the updated train_dataset_group.
+                ds_for_collator = train_dataset_group if args.max_data_loader_n_workers == 0 else None
+                collator = train_util.collator_class(current_epoch, current_step, ds_for_collator)
+                
+                train_dataloader = torch.utils.data.DataLoader(
+                    train_dataset_group, # This is the updated train_dataset_group
+                    batch_size=1, 
+                    shuffle=True, 
+                    collate_fn=collator,
+                    num_workers=n_workers, # Ensure n_workers is available
+                    persistent_workers=args.persistent_data_loader_workers,
+                )
+                # Important: The sharded_dataloader that will be used by the training loop
+                # needs to be updated to this newly prepared dataloader.
+                # The existing `sharded_dataloader = train_dataloader` (from previous step 1 fix)
+                # should now effectively be conditional or occur after this potential recreation.
+                # To simplify, assign the result of prepare to sharded_dataloader directly here.
+                sharded_dataloader = accelerator.prepare(train_dataloader)
+            # If dataset_was_modified_during_skip is False, sharded_dataloader remains the one initially prepared.
+            # If True, it's the newly prepared one from the block above.
+            # Thus, the following assignment is no longer needed here and potentially harmful if it overwrites
+            # a prepared dataloader with a non-prepared one.
           
 
             # Moved train_dataloader creation here to create dataloader after finalizing train_dataset_group and caching as necessary.
-        ds_for_collator = train_dataset_group if args.max_data_loader_n_workers == 0 else None
-        #current_epoch.value = epoch_to_start
-        #current_step.value = global_step
-        collator = train_util.collator_class(current_epoch, current_step, ds_for_collator)
-        train_dataloader = torch.utils.data.DataLoader(
-            train_dataset_group,
-            batch_size=1,
-            shuffle=True,
-            collate_fn=collator,
-            num_workers=n_workers,
-            persistent_workers=args.persistent_data_loader_workers,
-        )
-        sharded_dataloader = accelerator.prepare(train_dataloader)
+        # sharded_dataloader = train_dataloader # This line is removed.
         for epoch in range(epoch_to_start, num_train_epochs):
             accelerator.print(f"\nepoch {epoch+1}/{num_train_epochs}")
             current_epoch.value = epoch + 1
@@ -1189,7 +1209,8 @@ class NetworkTrainer:
                 if args.cache_text_encoder_outputs:
                     self.cache_text_encoder_outputs_if_needed(
                         args, accelerator, unet, vae, tokenizers, text_encoders, train_dataset_group, weight_dtype
-                    )  
+                    )
+                accelerator.wait_for_everyone()  # Wait for all processes to finish dataset/caching
                 ds_for_collator = train_dataset_group if args.max_data_loader_n_workers == 0 else None
                 collator = train_util.collator_class(current_epoch, current_step, ds_for_collator)
                 train_dataloader = torch.utils.data.DataLoader(
