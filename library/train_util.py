@@ -1048,6 +1048,9 @@ class BaseDataset(torch.utils.data.Dataset):
         logger.info("caching latents.")
         image_infos = list(self.image_data.values())
         image_infos = list(filter(lambda info: info.latent_cache_checked == False, image_infos))
+        if len(image_infos) == 0:
+            logger.info("All images latents previously checked and cached. Skipping.")
+            return
 
         # sort by resolution
         image_infos.sort(key=lambda info: info.bucket_reso[0] * info.bucket_reso[1])
@@ -1153,6 +1156,9 @@ class BaseDataset(torch.utils.data.Dataset):
         logger.info("caching text encoder outputs.")
         image_infos = list(self.image_data.values())
         image_infos = list(filter(lambda info: info.te_cache_checked == False, image_infos))
+        if len(image_infos) == 0:
+            logger.info("Text encoder outputs for all images previously checked and cached. Skipping.")
+            return
 
         logger.info("checking cache existence...")
         image_infos_to_cache = []
@@ -1816,54 +1822,57 @@ class DreamBoothDataset(BaseDataset):
             logger.warning("no regularization images / 正則化画像が見つかりませんでした")
             return
         if self.num_train_images < self.num_reg_images:
-            logger.warning("some of reg images are not used / 正則化画像の数が多いので、一部使用されない正則化画像があります")    
-        logger.info(f"Inititating loading of regularizaion images.")
-        for info, subset in self.reg_infos.values():
-            if info.image_key in self.image_data:
-                self.image_data.pop(info.image_key, None)
-                self.image_to_subset.pop(info.image_key, None)
+            logger.warning("some of reg images are not used / 正則化画像の数が多いので、一部使用されない正則化画像があります")
+
+        if not self.num_train_images == self.num_reg_images:
+            logger.info(f"Inititating loading of regularizaion images.")
+            for info, subset in self.reg_infos.values():
+                if info.image_key in self.image_data:
+                    self.image_data.pop(info.image_key, None)
+                    self.image_to_subset.pop(info.image_key, None)
             
-        
-        temp_reg_infos = copy.deepcopy(self.reg_infos)
-        n = 0
-        first_loop = True
-        logger.info(f"self.reg_infos_index_traverser at: {self.reg_infos_index_traverser}\n reg_infos_index len = {len(self.reg_infos_index)}")
-        reg_img_log = f"\nDataset seed: {self.seed}"
-        start_index = self.reg_infos_index_traverser
-                   
-        while n < self.num_train_images :
-            if self.reg_randomize and self.reg_infos_index_traverser == 0:
-                if distributed_state.num_processes > 1:
-                    if not distributed_state.is_main_process:
-                        self.reg_infos_index = []
+            temp_reg_infos = copy.deepcopy(self.reg_infos)
+            n = 0
+            first_loop = True
+            logger.info(f"self.reg_infos_index_traverser at: {self.reg_infos_index_traverser}\n reg_infos_index len = {len(self.reg_infos_index)}")
+            reg_img_log = f"\nDataset seed: {self.seed}"
+            start_index = self.reg_infos_index_traverser
+                       
+            while n < self.num_train_images :
+                if self.reg_randomize and self.reg_infos_index_traverser == 0:
+                    if distributed_state.num_processes > 1:
+                        if not distributed_state.is_main_process:
+                            self.reg_infos_index = []
+                        else:
+                            random.shuffle(self.reg_infos_index)
+                        distributed_state.wait_for_everyone()
+                        self.reg_infos_index = gather_object(self.reg_infos_index)
                     else:
                         random.shuffle(self.reg_infos_index)
-                    distributed_state.wait_for_everyone()
-                    self.reg_infos_index = gather_object(self.reg_infos_index)
+                info, subset = temp_reg_infos[self.reg_infos_index[self.reg_infos_index_traverser]]
+                if info.image_key in self.image_data:
+                    info.num_repeats += 1  # rewrite registered info
                 else:
-                    random.shuffle(self.reg_infos_index)
-            info, subset = temp_reg_infos[self.reg_infos_index[self.reg_infos_index_traverser]]
-            if info.image_key in self.image_data:
-                info.num_repeats += 1  # rewrite registered info
-            else:
-                self.register_image(info, subset)
-            
-            self.reg_infos_index_traverser += 1
-            if self.reg_infos_index_traverser % len(self.reg_infos_index) == 0:
-                self.reg_infos_index_traverser = 0
-            '''
-            if n < 5:
-                reg_img_log += f"\nRegistering image: {info.absolute_path}, count: {info.num_repeats}"
-            '''
-            n += 1
-
-        # logger.info(reg_img_log)
-        if distributed_state.is_main_process:
-            self.subset_loaded_count()
-        self.bucket_manager = None
-        if make_bucket:
-            self.make_buckets()
-        del temp_reg_infos
+                    self.register_image(info, subset)
+                
+                self.reg_infos_index_traverser += 1
+                if self.reg_infos_index_traverser % len(self.reg_infos_index) == 0:
+                    self.reg_infos_index_traverser = 0
+                '''
+                if n < 5:
+                    reg_img_log += f"\nRegistering image: {info.absolute_path}, count: {info.num_repeats}"
+                '''
+                n += 1
+    
+            # logger.info(reg_img_log)
+            if distributed_state.is_main_process:
+                self.subset_loaded_count()
+            self.bucket_manager = None
+            if make_bucket:
+                self.make_buckets()
+            del temp_reg_infos
+        else:
+            logger.warning(f"Number of training images({self.num_train_images}) is the same as number of regularization images({self.num_reg_images}).\nSkipping randomized/incremental loading of regularization images.")
 
 class FineTuningDataset(BaseDataset):
     def __init__(
