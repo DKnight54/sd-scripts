@@ -1920,7 +1920,8 @@ class DreamBoothDataset(BaseDataset):
             n += 1
 
         # logger.info(reg_img_log)
-        self.subset_loaded_count()
+        if PartialState().is_main_process:
+            self.subset_loaded_count()
         self.bucket_manager = None
         if make_bucket:
             self.make_buckets()
