@@ -963,7 +963,7 @@ class NetworkTrainer:
                 # The existing `sharded_dataloader = train_dataloader` (from previous step 1 fix)
                 # should now effectively be conditional or occur after this potential recreation.
                 # To simplify, assign the result of prepare to sharded_dataloader directly here.
-                sharded_dataloader = accelerator.prepare(train_dataloader)
+        sharded_dataloader = accelerator.prepare(train_dataloader)
             # If dataset_was_modified_during_skip is False, sharded_dataloader remains the one initially prepared.
             # If True, it's the newly prepared one from the block above.
             # Thus, the following assignment is no longer needed here and potentially harmful if it overwrites
