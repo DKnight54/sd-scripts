@@ -1831,12 +1831,12 @@ class DreamBoothDataset(BaseDataset):
                    
         while n < self.num_train_images :
             if self.reg_randomize and self.reg_infos_index_traverser == 0:
-                if distributedstate.num_processes > 1:
-                    if not distributedstate.is_main_process:
+                if distributed_state.num_processes > 1:
+                    if not distributed_state.is_main_process:
                         self.reg_infos_index = []
                     else:
                         random.shuffle(self.reg_infos_index)
-                    distributedstate.wait_for_everyone()
+                    distributed_state.wait_for_everyone()
                     self.reg_infos_index = gather_object(self.reg_infos_index)
                 else:
                     random.shuffle(self.reg_infos_index)
