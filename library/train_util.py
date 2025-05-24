@@ -714,6 +714,7 @@ class BaseDataset(torch.utils.data.Dataset):
         self.reg_reload = reg_reload
             
     def incremental_reg_load(self, make_bucket = False): # Placeholder method, does nothing unless overridden in subclasses.
+        PartialState().wait_for_everyone()
         return
         
     def set_caching_mode(self, mode):
@@ -1871,12 +1872,14 @@ class DreamBoothDataset(BaseDataset):
     
     def incremental_reg_load(self, make_bucket = False):
     #override to for loading random reg images
+        distributedstate = PartialState()
+        distributedstate.wait_for_everyone()
         if self.num_reg_images == 0:
             logger.warning("no regularization images / 正則化画像が見つかりませんでした")
             return
         if self.num_train_images < self.num_reg_images:
             logger.warning("some of reg images are not used / 正則化画像の数が多いので、一部使用されない正則化画像があります")    
-        logger.info(f"Forcing random reload of reg images.")
+        logger.info(f"Inititating reload of regularizaion images.")
         for info, subset in self.reg_infos.values():
             if info.image_key in self.image_data:
                 self.image_data.pop(info.image_key, None)
@@ -1892,7 +1895,14 @@ class DreamBoothDataset(BaseDataset):
                    
         while n < self.num_train_images :
             if self.reg_randomize and self.reg_infos_index_traverser == 0:
-                random.shuffle(self.reg_infos_index)
+                if distributedstate.num_processes > 1:
+                    if not distributedstate.is_main_process:
+                        self.reg_infos_index = []
+                    else:
+                        random.shuffle(self.reg_infos_index)
+                    self.reg_infos_index = gather_object(self.reg_infos_index)
+                else:
+                    random.shuffle(self.reg_infos_index)
             info, subset = temp_reg_infos[self.reg_infos_index[self.reg_infos_index_traverser]]
             if info.image_key in self.image_data:
                 info.num_repeats += 1  # rewrite registered info
