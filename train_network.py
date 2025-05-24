@@ -213,7 +213,16 @@ class NetworkTrainer:
 
         current_epoch = Value("i", 0)
         current_step = Value("i", 0)
-
+        
+        if args.incremental_reg_reload:
+            train_dataset_group.set_reg_reload(args.incremental_reg_reload)
+            if args.persistent_data_loader_workers:
+                logger.warning("persistent_data_loader_workers has been set to False because incremental_reg_reload is enabled.")
+                args.persistent_data_loader_workers = False
+        if args.randomized_regularization_image:
+            # train_dataset_group.set_reg_randomize() triggers a reload to initial state with randomized regularization images. Ensure that this occurs before initial caching to prevent data mismatch
+            train_dataset_group.set_reg_randomize(args.randomized_regularization_image)
+            
         if args.debug_dataset:
             train_util.debug_dataset(train_dataset_group)
             return
@@ -227,14 +236,6 @@ class NetworkTrainer:
             assert (
                 train_dataset_group.is_latent_cacheable()
             ), "when caching latents, either color_aug or random_crop cannot be used / latentをキャッシュするときはcolor_augとrandom_cropは使えません"
-            
-        if args.incremental_reg_reload:
-            train_dataset_group.set_reg_reload(args.incremental_reg_reload)
-            if args.persistent_data_loader_workers:
-                logger.warning("persistent_data_loader_workers has been set to False because incremental_reg_reload is enabled.")
-                args.persistent_data_loader_workers = False
-        if args.randomized_regularization_image:
-            train_dataset_group.set_reg_randomize(args.randomized_regularization_image)
             
         self.assert_extra_args(args, train_dataset_group)
 
