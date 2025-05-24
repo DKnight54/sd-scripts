@@ -960,7 +960,7 @@ class BaseDataset(torch.utils.data.Dataset):
         min_size and max_size are ignored when enable_bucket is False
         """
         logger.info("loading image sizes.")
-        for info in tqdm(self.image_data.values()):
+        for info in tqdm(self.image_data.values(), mininterval = 0.5):
             if info.image_size is None:
                 info.image_size = self.get_image_size(info.absolute_path)
 
@@ -1127,7 +1127,7 @@ class BaseDataset(torch.utils.data.Dataset):
         current_condition = None
 
         logger.info("checking cache validity...")
-        for info in tqdm(image_infos):
+        for info in tqdm(image_infos, mininterval = 1):
             subset = self.image_to_subset[info.image_key]
 
             if info.latents_npz is not None:  # fine tuning dataset
@@ -1169,7 +1169,7 @@ class BaseDataset(torch.utils.data.Dataset):
 
         # iterate batches: batch doesn't have image, image will be loaded in cache_batch_latents and discarded
         logger.info("caching latents...")
-        for condition, batch_of_gathered_infos in tqdm(batches, smoothing=1, total=len(batches)):
+        for condition, batch_of_gathered_infos in tqdm(batches, smoothing=1, total=len(batches), mininterval = 1):
             # batch_of_gathered_infos contains COPIES of ImageInfo objects from the gather step
             cache_batch_latents(vae, cache_to_disk, batch_of_gathered_infos, condition.flip_aug, condition.alpha_mask, condition.random_crop)
             
@@ -1223,7 +1223,7 @@ class BaseDataset(torch.utils.data.Dataset):
 
         logger.info("checking cache existence...")
         image_infos_to_cache = []
-        for info in tqdm(image_infos):
+        for info in tqdm(image_infos, mininterval = 1):
             # subset = self.image_to_subset[info.image_key]
             info.te_cache_checked = True
             if cache_to_disk:
@@ -1264,7 +1264,7 @@ class BaseDataset(torch.utils.data.Dataset):
 
         # iterate batches: call text encoder and cache outputs for memory or disk
         logger.info("caching text encoder outputs...")
-        for batch in tqdm(batches):
+        for batch in tqdm(batches, mininterval = 1):
             infos, input_ids1, input_ids2 = zip(*batch)
             input_ids1 = torch.stack(input_ids1, dim=0)
             input_ids2 = torch.stack(input_ids2, dim=0)
@@ -1793,7 +1793,7 @@ class DreamBoothDataset(BaseDataset):
 
             if not use_cached_info_for_subset and subset.cache_info:
                 logger.info(f"cache image info for / 画像情報をキャッシュします : {info_cache_file}")
-                sizes = [self.get_image_size(img_path) for img_path in tqdm(img_paths, desc="get image size")]
+                sizes = [self.get_image_size(img_path) for img_path in tqdm(img_paths, mininterval = 0.5, desc="get image size")]
                 matas = {}
                 for img_path, caption, size in zip(img_paths, captions, sizes):
                     matas[img_path] = {"caption": caption, "resolution": list(size)}
@@ -1865,10 +1865,9 @@ class DreamBoothDataset(BaseDataset):
             for img_key in img_keys:
                 counter += self.image_data[img_key].num_repeats
             count_str += f"{counter}/{subset.img_count * subset.num_repeats}"
-            logger.info(count_str)
-            logger.info(f"Subset dir: {subset.image_dir}" if subset.image_dir is not None else "")
-        count_str = ""
-        logger.info("")
+            count_str += f"\nSubset dir: {subset.image_dir}" if subset.image_dir is not None else "")
+        count_str += "\n"
+        logger.info(count_str)
     
     def incremental_reg_load(self, make_bucket = False):
     #override to for loading random reg images
@@ -1879,7 +1878,7 @@ class DreamBoothDataset(BaseDataset):
             return
         if self.num_train_images < self.num_reg_images:
             logger.warning("some of reg images are not used / 正則化画像の数が多いので、一部使用されない正則化画像があります")    
-        logger.info(f"Inititating reload of regularizaion images.")
+        logger.info(f"Inititating loading of regularizaion images.")
         for info, subset in self.reg_infos.values():
             if info.image_key in self.image_data:
                 self.image_data.pop(info.image_key, None)
