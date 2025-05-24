@@ -1169,18 +1169,42 @@ class BaseDataset(torch.utils.data.Dataset):
 
         # iterate batches: batch doesn't have image, image will be loaded in cache_batch_latents and discarded
         logger.info("caching latents...")
-        for condition, batch in tqdm(batches, smoothing=1, total=len(batches)):
-            cache_batch_latents(vae, cache_to_disk, batch, condition.flip_aug, condition.alpha_mask, condition.random_crop)
-            if self.reg_infos is not None:
-                for info in batch:
-                    if info.image_key in self.reg_infos:
-                        self.reg_infos[info.image_key][0].latents_npz = info.latents_npz
-                        self.reg_infos[info.image_key][0].latents_original_size = info.latents_original_size
-                        self.reg_infos[info.image_key][0].latents_crop_ltrb = info.latents_crop_ltrb
-                        self.reg_infos[info.image_key][0].latents_crop_ltrb = info.latents_flipped
-                        self.reg_infos[info.image_key][0].latents = info.latents
-                        self.reg_infos[info.image_key][0].alpha_mask = info.alpha_mask
-                        self.reg_infos[info.image_key][0].latent_cache_checked = True
+        for condition, batch_of_gathered_infos in tqdm(batches, smoothing=1, total=len(batches)):
+            # batch_of_gathered_infos contains COPIES of ImageInfo objects from the gather step
+            cache_batch_latents(vae, cache_to_disk, batch_of_gathered_infos, condition.flip_aug, condition.alpha_mask, condition.random_crop)
+            
+            # Update the original ImageInfo objects in self.image_data and self.reg_infos on EACH process
+            # This ensures that the latent_cache_checked status and cached data (if in-memory) are propagated
+            # to the authoritative dataset objects for the next epoch.
+            for processed_info_copy in batch_of_gathered_infos:
+                image_key = processed_info_copy.image_key
+
+                # Update self.image_data
+                if image_key in self.image_data:
+                    original_info_in_img_data = self.image_data[image_key]
+                    original_info_in_img_data.latent_cache_checked = True
+                    original_info_in_img_data.latents_original_size = processed_info_copy.latents_original_size
+                    original_info_in_img_data.latents_crop_ltrb = processed_info_copy.latents_crop_ltrb
+                    if cache_to_disk:
+                        # For disk caching, the main process sets latents_npz. Other processes need this path.
+                        original_info_in_img_data.latents_npz = processed_info_copy.latents_npz
+                    else: # In-memory caching
+                        original_info_in_img_data.latents = processed_info_copy.latents
+                        original_info_in_img_data.latents_flipped = processed_info_copy.latents_flipped
+                        original_info_in_img_data.alpha_mask = processed_info_copy.alpha_mask
+                
+                # Update self.reg_infos (if applicable)
+                if self.reg_infos is not None and image_key in self.reg_infos:
+                    original_reg_info = self.reg_infos[image_key][0]
+                    original_reg_info.latent_cache_checked = True
+                    original_reg_info.latents_original_size = processed_info_copy.latents_original_size
+                    original_reg_info.latents_crop_ltrb = processed_info_copy.latents_crop_ltrb
+                    if cache_to_disk:
+                        original_reg_info.latents_npz = processed_info_copy.latents_npz
+                    else: # In-memory caching
+                        original_reg_info.latents = processed_info_copy.latents
+                        original_reg_info.latents_flipped = processed_info_copy.latents_flipped
+                        original_reg_info.alpha_mask = processed_info_copy.alpha_mask
 
     
     # weight_dtypeを指定するとText Encoderそのもの、およひ出力がweight_dtypeになる
