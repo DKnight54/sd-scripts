@@ -714,7 +714,6 @@ class BaseDataset(torch.utils.data.Dataset):
         self.reg_reload = reg_reload
             
     def incremental_reg_load(self, make_bucket = False): # Placeholder method, does nothing unless overridden in subclasses.
-        PartialState().wait_for_everyone()
         return
         
     def set_caching_mode(self, mode):
@@ -1873,7 +1872,7 @@ class DreamBoothDataset(BaseDataset):
     def incremental_reg_load(self, make_bucket = False):
     #override to for loading random reg images
         distributedstate = PartialState()
-        distributedstate.wait_for_everyone()
+        
         if self.num_reg_images == 0:
             logger.warning("no regularization images / 正則化画像が見つかりませんでした")
             return
@@ -1900,6 +1899,7 @@ class DreamBoothDataset(BaseDataset):
                         self.reg_infos_index = []
                     else:
                         random.shuffle(self.reg_infos_index)
+                    distributedstate.wait_for_everyone()
                     self.reg_infos_index = gather_object(self.reg_infos_index)
                 else:
                     random.shuffle(self.reg_infos_index)
