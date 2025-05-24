@@ -657,8 +657,11 @@ class BaseDataset(torch.utils.data.Dataset):
 
         # caching
         self.caching_mode = None  # None, 'latents', 'text'
+        
+        # lists for incremental loading of regularization images
         self.reg_infos = None
         self.reg_infos_index = None
+        self.reg_randomize = False
      
 
     def adjust_min_max_bucket_reso_by_steps(
@@ -692,6 +695,12 @@ class BaseDataset(torch.utils.data.Dataset):
     def set_seed(self, seed):
         self.seed = seed
 
+    def set_reg_randomize(self, reg_randomize = False):
+        self.reg_randomize = reg_randomize
+
+    def set_reg_reload(self, reg_reload):
+        self.reg_reload = reg_reload
+
     def incremental_reg_load(self, make_bucket = False): # Placeholder method, does nothing unless overridden in subclasses.
         return
         
@@ -705,21 +714,7 @@ class BaseDataset(torch.utils.data.Dataset):
                 num_epochs = epoch - self.current_epoch
                 for _ in range(num_epochs):
                     self.current_epoch += 1
-                    '''
-                    if self.reg_reload.value:
-                        self.bucket_manager = None
-                        self.incremental_reg_load(make_bucket = True)
-                if self.use_cache_latents and self.reg_reload.value:
-                    vae.to(accelerator.device, dtype=self.vae_dtype)
-                    vae.requires_grad_(False)
-                    vae.eval()
-                    with torch.no_grad():
-                        cache_latents(self.vae, self.vae_batch_size, self.cache_to_disk, self.accelerator.is_main_process)
-                    vae.to("cpu")
-                    clean_memory_on_device(accelerator.device)
-                    accelerator.wait_for_everyone()
-                    '''
-                self.shuffle_buckets()
+                    self.shuffle_buckets()
                 # self.current_epoch seem to be set to 0 again in the next epoch. it may be caused by skipped_dataloader?
             else:
                 logger.warning("epoch is not incremented. current_epoch: {}, epoch: {}".format(self.current_epoch, epoch))
@@ -1786,37 +1781,18 @@ class DreamBoothDataset(BaseDataset):
         self.num_train_images = num_train_images
 
         logger.info(f"{num_reg_images} reg images.")
-        '''
-        if num_train_images < num_reg_images:
-            random.shuffle(self.reg_infos)
-            logger.warning("some of reg images are not used / 正則化画像の数が多いので、一部使用されない正則化画像があります")
-
-        if num_reg_images == 0:
-            logger.warning("no regularization images / 正則化画像が見つかりませんでした")
-        else:
-            # num_repeatsを計算する：どうせ大した数ではないのでループで処理する
-            temp_reg_infos = copy.deepcopy(self.reg_infos)
-            n = 0
-            reg_img_log = f"\nDataset seed: {self.seed}"
-            while n < num_train_images:
-                for info, subset in temp_reg_infos:
-                    if info.image_key in self.image_data:
-                        info.num_repeats += 1  # rewrite registered info
-                    else:
-                        self.register_image(info, subset)
-                    reg_img_log += f"\nRegistering image: {info.absolute_path}, count: {info.num_repeats}"
-                    n += 1
-                    if n >= num_train_images:
-                        break
-                random.shuffle(temp_reg_infos)
-            logger.info(reg_img_log)
-            del temp_reg_infos
-        '''
         self.num_reg_images = num_reg_images
         #random.shuffle(self.reg_infos_index)
-        self.temp_index=0
+        self.reg_infos_index_traverser = 0
         #self.subset_loaded_count()
-
+    
+    def set_reg_randomize(self, reg_randomize = False):
+        self.reg_randomize = reg_randomize
+        # As first set of data is loaded before the first opportunity to shuffle, will need to force reset self.reg_infos_index_traverser and reinitialize dataset
+        self.reg_infos_index_traverser = 0
+        self.bucket_manager = None
+        self.incremental_reg_load(True)
+        
     def subset_loaded_count(self):
         count_str = ""
         for index, subset in enumerate(self.subsets):
@@ -1832,12 +1808,14 @@ class DreamBoothDataset(BaseDataset):
     
     def incremental_reg_load(self, make_bucket = False):
     #override to for loading random reg images
+        distributed_state = PartialState()
+        
         if self.num_reg_images == 0:
             logger.warning("no regularization images / 正則化画像が見つかりませんでした")
             return
         if self.num_train_images < self.num_reg_images:
             logger.warning("some of reg images are not used / 正則化画像の数が多いので、一部使用されない正則化画像があります")    
-        logger.info(f"Forcing random reload of reg images.")
+        logger.info(f"Inititating loading of regularizaion images.")
         for info, subset in self.reg_infos.values():
             if info.image_key in self.image_data:
                 self.image_data.pop(info.image_key, None)
@@ -1847,45 +1825,43 @@ class DreamBoothDataset(BaseDataset):
         temp_reg_infos = copy.deepcopy(self.reg_infos)
         n = 0
         first_loop = True
-        logger.info(f"self.reg_infos_index at: {self.temp_index}\n reg_infos_index len = {len(self.reg_infos_index)}")
+        logger.info(f"self.reg_infos_index_traverser at: {self.reg_infos_index_traverser}\n reg_infos_index len = {len(self.reg_infos_index)}")
         reg_img_log = f"\nDataset seed: {self.seed}"
-        start_index = self.temp_index
+        start_index = self.reg_infos_index_traverser
+                   
         while n < self.num_train_images :
-            info, subset = temp_reg_infos[self.reg_infos_index[self.temp_index]]
+            if self.reg_randomize and self.reg_infos_index_traverser == 0:
+                if distributedstate.num_processes > 1:
+                    if not distributedstate.is_main_process:
+                        self.reg_infos_index = []
+                    else:
+                        random.shuffle(self.reg_infos_index)
+                    distributedstate.wait_for_everyone()
+                    self.reg_infos_index = gather_object(self.reg_infos_index)
+                else:
+                    random.shuffle(self.reg_infos_index)
+            info, subset = temp_reg_infos[self.reg_infos_index[self.reg_infos_index_traverser]]
             if info.image_key in self.image_data:
                 info.num_repeats += 1  # rewrite registered info
             else:
                 self.register_image(info, subset)
             
-            self.temp_index += 1
-            if self.temp_index % len(self.reg_infos_index) == 0:
-                self.temp_index = 0
+            self.reg_infos_index_traverser += 1
+            if self.reg_infos_index_traverser % len(self.reg_infos_index) == 0:
+                self.reg_infos_index_traverser = 0
+            '''
             if n < 5:
                 reg_img_log += f"\nRegistering image: {info.absolute_path}, count: {info.num_repeats}"
+            '''
             n += 1
-            
-            '''
-            for reg_key in self.reg_infos_index:
-                info, subset =  temp_reg_infos[reg_key]
 
-               
-                if info.image_key in self.image_data:
-                    info.num_repeats += 1  # rewrite registered info
-                else:
-                    self.register_image(info, subset)
-                if n < 5:
-                    reg_img_log += f"\nRegistering image: {info.absolute_path}, count: {info.num_repeats}"
-                n += 1
-                if n >= self.num_train_images:
-                    break
-            random.shuffle(self.reg_infos_index)
-            '''
-        logger.info(reg_img_log)
+        # logger.info(reg_img_log)
+        if distributed_state.is_main_process:
+            self.subset_loaded_count()
         self.bucket_manager = None
         if make_bucket:
             self.make_buckets()
         del temp_reg_infos
-        self.subset_loaded_count()
 
 class FineTuningDataset(BaseDataset):
     def __init__(
@@ -2324,7 +2300,11 @@ class DatasetGroup(torch.utils.data.ConcatDataset):
 
     def set_reg_reload(self, reg_reload):
         for dataset in self.datasets:
-            dataset.reg_reload.value = reg_reload
+            dataset.reg_reload = reg_reload
+
+    def set_reg_randomize(self, reg_randomize = False):
+        for dataset in self.datasets:
+            dataset.reg_randomize = reg_randomize
 
     def make_buckets(self):
         for dataset in self.datasets:
@@ -3726,9 +3706,14 @@ def add_training_arguments(parser: argparse.ArgumentParser, support_dreambooth: 
     parser.add_argument(
         "--incremental_reg_load",
         action="store_true",
-        help="Forces reload of regularization images. Useful if there are more regularization images than training images",
+        help="Forces reload of regularization images at each Epoch. Will sequentially load regularization images unless '--randomized_regularization_image' is set. Useful if there are more regularization images than training images",
     )
-    
+    parser.add_argument(
+        "--randomized_regularization_image",
+        action="store_true",
+        help="Shuffles regularization images to even out distribution. Useful if there are more regularization images than training images",
+    )
+       
 
     if support_dreambooth:
         # DreamBooth training
