@@ -212,6 +212,7 @@ class NetworkTrainer:
         current_epoch = Value("i", 0)
         current_step = Value("i", 0)
 
+        accelerator.wait_for_everyone()
         if args.debug_dataset:
             train_util.debug_dataset(train_dataset_group)
             return
@@ -948,7 +949,9 @@ class NetworkTrainer:
             persistent_workers=args.persistent_data_loader_workers,
         )
         sharded_dataloader = accelerator.prepare(train_dataloader)
+        
         for epoch in range(epoch_to_start, num_train_epochs):
+            accelerator.wait_for_everyone()
             accelerator.print(f"\nepoch {epoch+1}/{num_train_epochs}")
             current_epoch.value = epoch + 1
 
