@@ -9,6 +9,7 @@ import json
 from multiprocessing import Value
 import toml
 import copy
+import gc
 
 from tqdm import tqdm
 
@@ -303,7 +304,7 @@ class NetworkTrainer:
         if network is None:
             return
         network_has_multiplier = hasattr(network, "set_multiplier")
-
+        gc.collect()
         if hasattr(network, "prepare_network"):
             network.prepare_network(args)
         if args.scale_weight_norms and not hasattr(network, "apply_max_norm_regularization"):
