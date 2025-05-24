@@ -2304,7 +2304,7 @@ class DatasetGroup(torch.utils.data.ConcatDataset):
 
     def set_reg_randomize(self, reg_randomize = False):
         for dataset in self.datasets:
-            dataset.reg_randomize = reg_randomize
+            dataset.set_reg_randomize(reg_randomize)
 
     def make_buckets(self):
         for dataset in self.datasets:
