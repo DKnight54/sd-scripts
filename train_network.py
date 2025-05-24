@@ -167,18 +167,21 @@ class NetworkTrainer:
         if args.dataset_class is None:
             blueprint_generator = BlueprintGenerator(ConfigSanitizer(True, True, args.masked_loss, True))
             if use_user_config:
-                logger.info(f"Loading dataset config from {args.dataset_config}")
+                if is_main_process:
+                    logger.info(f"Loading dataset config from {args.dataset_config}")
                 user_config = config_util.load_user_config(args.dataset_config)
                 ignored = ["train_data_dir", "reg_data_dir", "in_json"]
                 if any(getattr(args, attr) is not None for attr in ignored):
-                    logger.warning(
-                        "ignoring the following options because config file is found: {0} / 設定ファイルが利用されるため以下のオプションは無視されます: {0}".format(
-                            ", ".join(ignored)
+                    if is_main_process:
+                        logger.warning(
+                            "ignoring the following options because config file is found: {0} / 設定ファイルが利用されるため以下のオプションは無視されます: {0}".format(
+                                ", ".join(ignored)
+                            )
                         )
-                    )
             else:
                 if use_dreambooth_method:
-                    logger.info("Using DreamBooth method.")
+                    if is_main_process:
+                        logger.info("Using DreamBooth method.")
                     user_config = {
                         "datasets": [
                             {
@@ -189,7 +192,8 @@ class NetworkTrainer:
                         ]
                     }
                 else:
-                    logger.info("Training with captions.")
+                    if is_main_process:
+                        logger.info("Training with captions.")
                     user_config = {
                         "datasets": [
                             {
@@ -216,6 +220,9 @@ class NetworkTrainer:
             train_util.debug_dataset(train_dataset_group)
             return
         if len(train_dataset_group) == 0:
+            # This error is critical and should be shown by all processes if possible,
+            # but to be safe with potential logging issues, we can restrict it or ensure it's robust.
+            # For now, let it be as is, assuming logger.error is handled well by the setup.
             logger.error(
                 "No data found. Please verify arguments (train_data_dir must be the parent of folders with images) / 画像がありません。引数指定を確認してください（train_data_dirには画像があるフォルダではなく、画像があるフォルダの親フォルダを指定する必要があります）"
             )
@@ -245,7 +252,8 @@ class NetworkTrainer:
 
         # 差分追加学習のためにモデルを読み込む
         sys.path.append(os.path.dirname(__file__))
-        accelerator.print("import network module:", args.network_module)
+        if is_main_process:
+            accelerator.print("import network module:", args.network_module)
         network_module = importlib.import_module(args.network_module)
 
         if args.base_weights is not None:
@@ -255,15 +263,15 @@ class NetworkTrainer:
                     multiplier = 1.0
                 else:
                     multiplier = args.base_weights_multiplier[i]
-
-                accelerator.print(f"merging module: {weight_path} with multiplier {multiplier}")
+                if is_main_process:
+                    accelerator.print(f"merging module: {weight_path} with multiplier {multiplier}")
 
                 module, weights_sd = network_module.create_network_from_weights(
                     multiplier, weight_path, vae, text_encoder, unet, for_inference=True
                 )
                 module.merge_to(text_encoder, unet, weights_sd, weight_dtype, accelerator.device if args.lowram else "cpu")
-
-            accelerator.print(f"all weights merged: {', '.join(args.base_weights)}")
+            if is_main_process:
+                accelerator.print(f"all weights merged: {', '.join(args.base_weights)}")
 
         # 学習を準備する
         # prepare network
@@ -298,9 +306,10 @@ class NetworkTrainer:
         if hasattr(network, "prepare_network"):
             network.prepare_network(args)
         if args.scale_weight_norms and not hasattr(network, "apply_max_norm_regularization"):
-            logger.warning(
-                "warning: scale_weight_norms is specified but the network does not support it / scale_weight_normsが指定されていますが、ネットワークが対応していません"
-            )
+            if is_main_process:
+                logger.warning(
+                    "warning: scale_weight_norms is specified but the network does not support it / scale_weight_normsが指定されていますが、ネットワークが対応していません"
+                )
             args.scale_weight_norms = False
 
         train_unet = not args.network_train_text_encoder_only
@@ -310,7 +319,8 @@ class NetworkTrainer:
         if args.network_weights is not None:
             # FIXME consider alpha of weights
             info = network.load_weights(args.network_weights)
-            accelerator.print(f"load network weights from {args.network_weights}: {info}")
+            if is_main_process:
+                accelerator.print(f"load network weights from {args.network_weights}: {info}")
 
         if args.gradient_checkpointing:
             unet.enable_gradient_checkpointing()
@@ -320,7 +330,8 @@ class NetworkTrainer:
             network.enable_gradient_checkpointing()  # may have no effect
 
         # 学習に必要なクラスを準備する
-        accelerator.print("prepare optimizer, data loader etc.")
+        if is_main_process:
+            accelerator.print("prepare optimizer, data loader etc.")
 
         # 後方互換性を確保するよ
         try:
@@ -340,14 +351,16 @@ class NetworkTrainer:
             lr_descriptions = None
 
         # if len(trainable_params) == 0:
-        #     accelerator.print("no trainable parameters found / 学習可能なパラメータが見つかりませんでした")
+        #     if is_main_process:
+        #         accelerator.print("no trainable parameters found / 学習可能なパラメータが見つかりませんでした")
         # for params in trainable_params:
         #     for k, v in params.items():
         #         if type(v) == float:
         #             pass
         #         else:
         #             v = len(v)
-        #         accelerator.print(f"trainable_params: {k} = {v}")
+        #         if is_main_process:
+        #             accelerator.print(f"trainable_params: {k} = {v}")
 
         optimizer_name, optimizer_args, optimizer = train_util.get_optimizer(args, trainable_params)
 
@@ -372,9 +385,10 @@ class NetworkTrainer:
             args.max_train_steps = args.max_train_epochs * math.ceil(
                 num_of_steps/ accelerator.num_processes / args.gradient_accumulation_steps
             )
-            accelerator.print(
-                f"override steps. steps for {args.max_train_epochs} epochs is / 指定エポックまでのステップ数: {args.max_train_steps}"
-            )
+            if is_main_process:
+                accelerator.print(
+                    f"override steps. steps for {args.max_train_epochs} epochs is / 指定エポックまでのステップ数: {args.max_train_steps}"
+                )
 
         # データセット側にも学習ステップを送信
         train_dataset_group.set_max_train_steps(args.max_train_steps)
@@ -387,13 +401,15 @@ class NetworkTrainer:
             assert (
                 args.mixed_precision == "fp16"
             ), "full_fp16 requires mixed precision='fp16' / full_fp16を使う場合はmixed_precision='fp16'を指定してください。"
-            accelerator.print("enable full fp16 training.")
+            if is_main_process:
+                accelerator.print("enable full fp16 training.")
             network.to(weight_dtype)
         elif args.full_bf16:
             assert (
                 args.mixed_precision == "bf16"
             ), "full_bf16 requires mixed precision='bf16' / full_bf16を使う場合はmixed_precision='bf16'を指定してください。"
-            accelerator.print("enable full bf16 training.")
+            if is_main_process:
+                accelerator.print("enable full bf16 training.")
             network.to(weight_dtype)
 
         unet_weight_dtype = te_weight_dtype = weight_dtype
@@ -403,7 +419,8 @@ class NetworkTrainer:
             assert (
                 args.mixed_precision != "no"
             ), "fp8_base requires mixed precision='fp16' or 'bf16' / fp8を使う場合はmixed_precision='fp16'または'bf16'が必要です。"
-            accelerator.print("enable fp8 training.")
+            if is_main_process:
+                accelerator.print("enable fp8 training.")
             unet_weight_dtype = torch.float8_e4m3fn
             te_weight_dtype = torch.float8_e4m3fn
 
@@ -538,17 +555,18 @@ class NetworkTrainer:
         # TODO: find a way to handle total batch size when there are multiple datasets
         total_batch_size = args.train_batch_size * accelerator.num_processes * args.gradient_accumulation_steps
 
-        accelerator.print("running training / 学習開始")
-        accelerator.print(f"  num train images * repeats / 学習画像の数×繰り返し回数: {train_dataset_group.num_train_images}")
-        accelerator.print(f"  num reg images / 正則化画像の数: {train_dataset_group.num_reg_images}")
-        accelerator.print(f"  num batches per epoch / 1epochのバッチ数: {num_of_steps }")
-        accelerator.print(f"  num epochs / epoch数: {num_train_epochs}")
-        accelerator.print(
-            f"  batch size per device / バッチサイズ: {', '.join([str(d.batch_size) for d in train_dataset_group.datasets])}"
-        )
-        # accelerator.print(f"  total train batch size (with parallel & distributed & accumulation) / 総バッチサイズ（並列学習、勾配合計含む）: {total_batch_size}")
-        accelerator.print(f"  gradient accumulation steps / 勾配を合計するステップ数 = {args.gradient_accumulation_steps}")
-        accelerator.print(f"  total optimization steps / 学習ステップ数: {args.max_train_steps}")
+        if is_main_process:
+            accelerator.print("running training / 学習開始")
+            accelerator.print(f"  num train images * repeats / 学習画像の数×繰り返し回数: {train_dataset_group.num_train_images}")
+            accelerator.print(f"  num reg images / 正則化画像の数: {train_dataset_group.num_reg_images}")
+            accelerator.print(f"  num batches per epoch / 1epochのバッチ数: {num_of_steps }")
+            accelerator.print(f"  num epochs / epoch数: {num_train_epochs}")
+            accelerator.print(
+                f"  batch size per device / バッチサイズ: {', '.join([str(d.batch_size) for d in train_dataset_group.datasets])}"
+            )
+            # accelerator.print(f"  total train batch size (with parallel & distributed & accumulation) / 総バッチサイズ（並列学習、勾配合計含む）: {total_batch_size}")
+            accelerator.print(f"  gradient accumulation steps / 勾配を合計するステップ数 = {args.gradient_accumulation_steps}")
+            accelerator.print(f"  total optimization steps / 学習ステップ数: {args.max_train_steps}")
 
         # TODO refactor metadata creation and move to util
         metadata = {
@@ -798,14 +816,16 @@ class NetworkTrainer:
                 global_step = initial_step # Moved global steps here to prevent gradient accumulation steps from confusing results.
                 # if skip_until_initial_step is specified, load data and discard it to ensure the same data is used
                 if not args.resume:
-                    logger.info(
-                        f"initial_step is specified but not resuming. lr scheduler will be started from the beginning / initial_stepが指定されていますがresumeしていないため、lr schedulerは最初から始まります"
-                    )
+                    if is_main_process:
+                        logger.info(
+                            f"initial_step is specified but not resuming. lr scheduler will be started from the beginning / initial_stepが指定されていますがresumeしていないため、lr schedulerは最初から始まります"
+                        )
                 if args.resume_from_epoch and epoch_from_state is not None:
                     epoch_to_start = epoch_from_state
                     initial_step = (epoch_to_start - 1) * num_of_steps#Skips only epochs
                 else:
-                    logger.info(f"skipping {initial_step} steps / {initial_step}ステップをスキップします")
+                    if is_main_process:
+                        logger.info(f"skipping {initial_step} steps / {initial_step}ステップをスキップします")
                     initial_step *= args.gradient_accumulation_steps
 
                     # set epoch to start to make initial_step less than len(train_dataloader)
@@ -874,7 +894,8 @@ class NetworkTrainer:
         if args.incremental_reg_reload:
             train_dataset_group.set_reg_reload(args.incremental_reg_reload)
             if args.persistent_data_loader_workers:
-                logger.warning("persistent_data_loader_workers has been set to False because incremental_reg_reload is enabled.")
+                if is_main_process:
+                    logger.warning("persistent_data_loader_workers has been set to False because incremental_reg_reload is enabled.")
                 args.persistent_data_loader_workers = False
         if args.randomized_regularization_image:
             train_dataset_group.set_reg_randomize(args.randomized_regularization_image)
@@ -902,17 +923,21 @@ class NetworkTrainer:
             
             if args.incremental_reg_reload:
                 '''
-                logger.info("Clearing existing data...")
+                if is_main_process:
+                    logger.info("Clearing existing data...")
                 # Exhaust dataloader to reload skipped reg images correctly
                 for step, batch in enumerate(tqdm(train_dataloader)):
                     continue
-                logger.info("Done clearing existing data")
+                if is_main_process:
+                    logger.info("Done clearing existing data")
                 '''
             for skip_epoch in range(epoch_to_start):  # skip epochs
-                logger.info(f"skipping epoch {skip_epoch+1} because initial_step (multiplied) is {initial_step}")
+                if is_main_process:
+                    logger.info(f"skipping epoch {skip_epoch+1} because initial_step (multiplied) is {initial_step}")
                 # current_epoch.value = skip_epoch+1
                 train_dataset_group.incremental_reg_load(False)
-                logger.info(f"len(train_dataset_group) = {len(train_dataset_group)}")
+                if is_main_process: # This log might be too verbose if not gated
+                    logger.info(f"len(train_dataset_group) = {len(train_dataset_group)}")
                 initial_step -= num_of_steps
             train_dataset_group.make_buckets()
             # Start cache latents here if necessary after train_datasetgroup has been finalized for the first run.
@@ -949,7 +974,8 @@ class NetworkTrainer:
         )
         sharded_dataloader = accelerator.prepare(train_dataloader)
         for epoch in range(epoch_to_start, num_train_epochs):
-            accelerator.print(f"\nepoch {epoch+1}/{num_train_epochs}")
+            if is_main_process:
+                accelerator.print(f"\nepoch {epoch+1}/{num_train_epochs}")
             current_epoch.value = epoch + 1
 
   
@@ -961,7 +987,8 @@ class NetworkTrainer:
             if initial_step > 0:
                 skipped_dataloader = accelerator.skip_first_batches(sharded_dataloader, initial_step - 1)
                 initial_step = 1
-            logger.info(f"\nProcess: {accelerator.state.local_process_index + 1 }/{accelerator.state.num_processes}\nLength of Dataloader: {len(skipped_dataloader or train_dataloader)}\nLength of train_dataset_group: {len(train_dataset_group)}")
+            if is_main_process: # This log might be too verbose if not gated
+                 logger.info(f"\nProcess: {accelerator.state.local_process_index + 1 }/{accelerator.state.num_processes}\nLength of Dataloader: {len(skipped_dataloader or train_dataloader)}\nLength of train_dataset_group: {len(train_dataset_group)}")
             progress_bar = tqdm(range(math.ceil(len(skipped_dataloader or sharded_dataloader) / args.gradient_accumulation_steps)), smoothing=0, disable=not accelerator.is_local_main_process, desc="steps")
             
             for step, batch in enumerate(skipped_dataloader or sharded_dataloader):
@@ -1105,7 +1132,7 @@ class NetworkTrainer:
                     # 指定ステップごとにモデルを保存
                     if args.save_every_n_steps is not None and global_step % args.save_every_n_steps == 0:
                         accelerator.wait_for_everyone()
-                        if accelerator.is_main_process:
+                        if is_main_process:
                             ckpt_name = train_util.get_step_ckpt_name(args, "." + args.save_model_as, global_step)
                             save_model(ckpt_name, accelerator.unwrap_model(network), global_step, epoch)
 
@@ -1141,6 +1168,8 @@ class NetworkTrainer:
                 
             accelerator.wait_for_everyone()
             progress_bar.close()
+
+            accelerator.wait_for_everyone() # <<< NEWLY ADDED LINE >>>
 
             # 指定エポックごとにモデルを保存
             if args.save_every_n_epochs is not None:

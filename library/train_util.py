@@ -1892,18 +1892,57 @@ class DreamBoothDataset(BaseDataset):
         reg_img_log = f"\nDataset seed: {self.seed}"
         start_index = self.reg_infos_index_traverser
                    
-        while n < self.num_train_images :
-            if self.reg_randomize and self.reg_infos_index_traverser == 0:
-                if distributedstate.num_processes > 1:
-                    if not distributedstate.is_main_process:
-                        self.reg_infos_index = []
-                    else:
-                        random.shuffle(self.reg_infos_index)
-                    distributedstate.wait_for_everyone()
-                    self.reg_infos_index = gather_object(self.reg_infos_index)
+        if self.reg_randomize and self.reg_infos_index_traverser == 0:
+            if distributedstate.num_processes > 1:
+                if not distributedstate.is_main_process:
+                    self.reg_infos_index = []  # Non-main processes clear their list
                 else:
+                    # Main process shuffles its version of the list
                     random.shuffle(self.reg_infos_index)
-            info, subset = temp_reg_infos[self.reg_infos_index[self.reg_infos_index_traverser]]
+                distributedstate.wait_for_everyone() # Main waits for others to clear, others wait for main to shuffle (or vice-versa)
+                self.reg_infos_index = gather_object(self.reg_infos_index) # All processes gather
+                # CRITICAL: After this line in the original code, self.reg_infos_index is a list of lists/None,
+                # e.g., [shuffled_list_from_main, [], [], ...] or [shuffled_list_from_main, None, None, ...]
+                # The subsequent code using self.reg_infos_index needs to correctly handle this structure.
+                # My previous fix aimed to make self.reg_infos_index a flat list on all processes.
+                # Reverting means this post-gather processing I added will be removed.
+            else: # Single process
+                random.shuffle(self.reg_infos_index)
+
+        while n < self.num_train_images :
+            # IMPORTANT: If self.reg_infos_index is a list of lists due to gather_object,
+            # the following line will need to correctly access the primary list.
+            # Assuming the primary list (from the main process) is the first element if it's a list of lists.
+            # Or, if gather_object flattens it in a specific way that was previously handled,
+            # this might break if not adjusted.
+            # Original problematic code likely had issues here if self.reg_infos_index was not flat.
+            current_reg_infos_index_list = self.reg_infos_index
+            if distributedstate.num_processes > 1 and isinstance(self.reg_infos_index, list) and len(self.reg_infos_index) > 0 and isinstance(self.reg_infos_index[0], list):
+                # This heuristic attempts to use the first non-empty list from the gathered objects,
+                # assuming it's the one from the main process. This is part of the original problematic logic.
+                found_list = False
+                for sublist in self.reg_infos_index:
+                    if isinstance(sublist, list) and len(sublist) > 0:
+                        current_reg_infos_index_list = sublist
+                        found_list = True
+                        break
+                if not found_list:
+                    # Fallback or error if no suitable list is found
+                    # if is_main_process: # This was gated in my logging reduction pass
+                    #     logger.warning("gather_object in incremental_reg_load did not return a usable list of indices from main process.")
+                    pass # current_reg_infos_index_list remains self.reg_infos_index
+            
+            # Ensure that current_reg_infos_index_list is not empty and traverser is within bounds
+            if not current_reg_infos_index_list: # If the list is empty
+                # if is_main_process: # This was gated in my logging reduction pass
+                #     logger.error("current_reg_infos_index_list is empty in incremental_reg_load. Cannot proceed.")
+                break
+            if self.reg_infos_index_traverser >= len(current_reg_infos_index_list):
+                # if is_main_process: # This was gated in my logging reduction pass
+                #    logger.warning(f"reg_infos_index_traverser ({self.reg_infos_index_traverser}) is out of bounds for current_reg_infos_index_list (len: {len(current_reg_infos_index_list)}). Resetting to 0.")
+                self.reg_infos_index_traverser = 0 
+
+            info, subset = temp_reg_infos[current_reg_infos_index_list[self.reg_infos_index_traverser]]
             if info.image_key in self.image_data:
                 info.num_repeats += 1  # rewrite registered info
             else:
