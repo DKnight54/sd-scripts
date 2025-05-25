@@ -698,9 +698,6 @@ class BaseDataset(torch.utils.data.Dataset):
     def set_reg_randomize(self, reg_randomize = False):
         self.reg_randomize = reg_randomize
 
-    def set_reg_reload(self, reg_reload):
-        self.reg_reload = reg_reload
-
     def incremental_reg_load(self, make_bucket = False): # Placeholder method, does nothing unless overridden in subclasses.
         return
         
@@ -2308,10 +2305,6 @@ class DatasetGroup(torch.utils.data.ConcatDataset):
     def add_replacement(self, str_from, str_to):
         for dataset in self.datasets:
             dataset.add_replacement(str_from, str_to)
-
-    def set_reg_reload(self, reg_reload):
-        for dataset in self.datasets:
-            dataset.reg_reload = reg_reload
 
     def set_reg_randomize(self, reg_randomize = False):
         for dataset in self.datasets:
