@@ -161,7 +161,7 @@ class NetworkTrainer:
             seed = gather_object(seed)
             args.seed = seed[0]
             '''
-            seed = random.randint(0, 2**32)
+            args.seed = random.randint(0, 2**32)
             logger.info(f"Seed for this run is: {args.seed}.")
         set_seed(args.seed)
 
