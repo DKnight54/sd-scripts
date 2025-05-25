@@ -576,10 +576,9 @@ def generate_dataset_group_by_blueprint(dataset_group_blueprint: DatasetGroupBlu
     seed = random.randint(0, 2**31)  # actual seed is seed + epoch_no
     for i, dataset in enumerate(datasets):
         logger.info(f"[Dataset {i}]")
-        dataset.set_seed(seed)
-        dataset.incremental_reg_load()
         dataset.make_buckets()
-        
+        dataset.set_seed(seed)
+
     return DatasetGroup(datasets)
 
 
