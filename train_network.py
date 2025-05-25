@@ -977,7 +977,7 @@ class NetworkTrainer:
                     num_workers=n_workers, # Ensure n_workers is available
                     persistent_workers=args.persistent_data_loader_workers,
                 )
-    
+                accelerator.wait_for_everyone()
                 sharded_dataloader = accelerator.prepare(train_dataloader)
 
             metadata["ss_epoch"] = str(epoch + 1)
