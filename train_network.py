@@ -930,8 +930,8 @@ class NetworkTrainer:
             for skip_epoch in range(epoch_to_start):  # skip epochs
                 logger.info(f"skipping epoch {skip_epoch+1} because initial_step (multiplied) is {initial_step}")
                 # current_epoch.value = skip_epoch+1
-                train_dataset_group.incremental_reg_load(True)
-                dataset_was_modified_during_skip = True
+                if args.incremental_reg_reload:
+                    train_dataset_group.incremental_reg_load(True)
                 initial_step -= num_of_steps
                 
             # Start cache latents here if necessary after train_datasetgroup has been finalized for the first run.
