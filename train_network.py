@@ -286,13 +286,15 @@ class NetworkTrainer:
         # To clean up and centralize caching handling.
         # *** TESTING ***
         '''
-        if args.cache_text_encoder_outputs:
-
+        if args.cache_text_encoder_outputs and self.is_sdxl:
             # When TE is not be trained, it will not be prepared so we need to use explicit autocast
             for t_enc in text_encoders:
                 t_enc.to("cpu", dtype=torch.float32) # Text Encoder doesn't work with fp16 on CPU
         else:
             # Text Encoderから毎回出力を取得するので、GPUに乗せておく
+            if not self.is_sdxl:
+                accelerator.print("Text Encoder caching not supported. Overriding args.cache_text_encoder_output to False")
+                args.cache_text_encoder_outputs = False
             for t_enc in text_encoders:
                 t_enc.to(accelerator.device, dtype=weight_dtype)
 
