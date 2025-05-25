@@ -8,8 +8,6 @@ import time
 import json
 from multiprocessing import Value
 import toml
-import copy
-import gc
 
 from tqdm import tqdm
 
@@ -219,12 +217,12 @@ class NetworkTrainer:
         current_step = Value("i", 0)
         
         if args.incremental_reg_reload:
-            train_dataset_group.set_reg_reload(args.incremental_reg_reload)
             if args.persistent_data_loader_workers:
                 logger.warning("persistent_data_loader_workers has been set to False because incremental_reg_reload is enabled.")
                 args.persistent_data_loader_workers = False
         if args.randomized_regularization_image:
             # train_dataset_group.set_reg_randomize() triggers a reload to initial state with randomized regularization images. Ensure that this occurs before initial caching to prevent data mismatch
+            logger.info("Reloading regularization images to load randomized set instead of sequential set")
             train_dataset_group.set_reg_randomize(args.randomized_regularization_image)
             
         if args.debug_dataset:
@@ -347,7 +345,6 @@ class NetworkTrainer:
         if network is None:
             return
         network_has_multiplier = hasattr(network, "set_multiplier")
-        gc.collect()
         if hasattr(network, "prepare_network"):
             network.prepare_network(args)
         if args.scale_weight_norms and not hasattr(network, "apply_max_norm_regularization"):
@@ -925,10 +922,7 @@ class NetworkTrainer:
         # For --sample_at_first
         if args.sample_at_first == True:
             self.sample_images(accelerator, args, 0, 0, accelerator.device, vae, tokenizer, text_encoder, unet)
-        if args.incremental_reg_reload:
-            logger.warning("incremental_reg_reload = True. Incremental reloading of Regularization Images requires persistent_data_loader_workers = false, overriding.")
-            args.persistent_data_loader_workers = False
-        
+      
         # training loop
 
         if initial_step > 0:  # only if skip_until_initial_step is specified
