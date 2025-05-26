@@ -1830,10 +1830,7 @@ class DreamBoothDataset(BaseDataset):
             
             temp_reg_infos = copy.deepcopy(self.reg_infos)
             n = 0
-            first_loop = True
             logger.info(f"self.reg_infos_index_traverser at: {self.reg_infos_index_traverser}\n reg_infos_index len = {len(self.reg_infos_index)}")
-            reg_img_log = f"\nDataset seed: {self.seed}"
-            start_index = self.reg_infos_index_traverser
                        
             while n < self.num_train_images :
                 if self.reg_randomize and self.reg_infos_index_traverser == 0:
@@ -1861,7 +1858,6 @@ class DreamBoothDataset(BaseDataset):
                 '''
                 n += 1
     
-            # logger.info(reg_img_log)
             if distributed_state.is_main_process:
                 self.subset_loaded_count()
             self.bucket_manager = None
@@ -5758,7 +5754,6 @@ def draw_text_on_image(text, max_width, text_color="black"):
     import textwrap
 
     font = ImageFont.load_default()
-    space_width = font.getbbox(' ')[2]
     font_size = 20
     
     def wrap_text(text, font, max_width):
@@ -5782,8 +5777,6 @@ def draw_text_on_image(text, max_width, text_color="black"):
 
     y_text = 10
     for line in lines:
-        bbox = text_draw.textbbox((0, 0), line, font=font)
-        height = bbox[3] - bbox[1]
         text_draw.text((10, y_text), line, font=font, fill=text_color)
         y_text += font_size
 

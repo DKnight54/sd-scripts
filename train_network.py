@@ -39,7 +39,6 @@ from library.custom_train_functions import (
     apply_masked_loss,
 )
 from library.utils import setup_logging, add_logging_arguments
-from accelerate.utils import gather_object, gather
 
 setup_logging()
 import logging
@@ -381,7 +380,7 @@ class NetworkTrainer:
             else:
                 trainable_params = results
                 lr_descriptions = None
-        except TypeError as e:
+        except TypeError:
             # logger.warning(f"{e}")
             # accelerator.print(
             #     "Deprecated: use prepare_optimizer_params(text_encoder_lr, unet_lr, learning_rate) instead of prepare_optimizer_params(text_encoder_lr, unet_lr)"
