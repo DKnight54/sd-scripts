@@ -95,27 +95,57 @@ def load_and_preprocess_image(image_path, min_bucket_reso, max_bucket_reso, prin
             printf(f"Warning: Image at {image_path} has zero dimension.")
             return None # Invalid image dimensions
 
-        # Determine target dimensions using bucketing logic
-        target_width, target_height = get_bucket_reso(
+        # Determine target bucket dimensions
+        bucket_w, bucket_h = get_bucket_reso(
             original_width,
             original_height,
             min_bucket_reso,
             max_bucket_reso,
-            long_side_step=384 # Standard step for SmolVLM-like models
+            long_side_step=384, # Standard step for SmolVLM-like models
+            output_multiple=64  # Assuming get_bucket_reso uses this; explicitly passed for clarity
         )
 
-        if target_width == 0 or target_height == 0:
-            printf(f"Warning: Calculated target dimensions for {image_path} are zero. Skipping resize.")
+        if bucket_w == 0 or bucket_h == 0:
+            printf(f"Warning: Calculated bucket dimensions for {image_path} are zero. Skipping image.")
             return None # Indicates an issue with bucketing result
 
-        # Choose resampling filter based on whether downscaling or upscaling
-        if target_width < original_width or target_height < original_height:
+        # Calculate intermediate resize dimensions to preserve aspect ratio
+        img_aspect_ratio = original_width / original_height
+        
+        # Resize scale ensures the image is large enough to cover the bucket after resizing
+        resize_scale = max(bucket_w / original_width, bucket_h / original_height)
+        
+        resize_w = int(round(original_width * resize_scale))
+        resize_h = int(round(original_height * resize_scale))
+
+        # Ensure resize dimensions are not zero
+        if resize_w == 0 or resize_h == 0:
+            printf(f"Warning: Intermediate resize dimensions for {image_path} are zero. Skipping image.")
+            return None
+
+        # Choose resampling filter based on whether intermediate resize is downscaling or upscaling
+        # Comparing areas is a robust way to determine this
+        if resize_w * resize_h < original_width * original_height:
             resample_filter = Image.LANCZOS # Generally better for downscaling
         else:
             resample_filter = Image.BICUBIC # Generally better for upscaling
             
-        processed_image = img.resize((target_width, target_height), resample_filter)
-        return processed_image
+        resized_img = img.resize((resize_w, resize_h), resample_filter)
+
+        # Center Crop
+        crop_x = (resize_w - bucket_w) // 2
+        crop_y = (resize_h - bucket_h) // 2
+        
+        # Ensure crop coordinates are valid (e.g., not negative if resize_w/h < bucket_w/h, though logic above should prevent this)
+        # And that the crop box does not exceed the resized image dimensions.
+        # This should ideally not happen if resize_scale logic is correct.
+        if crop_x < 0 or crop_y < 0 or (crop_x + bucket_w) > resize_w or (crop_y + bucket_h) > resize_h:
+             printf(f"Warning: Invalid crop dimensions for {image_path}. Crop box ({crop_x}, {crop_y}, {crop_x + bucket_w}, {crop_y + bucket_h}) vs resized ({resize_w}, {resize_h}). Skipping.")
+             return None
+
+        final_img = resized_img.crop((crop_x, crop_y, crop_x + bucket_w, crop_y + bucket_h))
+        
+        return final_img
 
     except FileNotFoundError:
         printf(f"Error: Image file not found at {image_path}")
