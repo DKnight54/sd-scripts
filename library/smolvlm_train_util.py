@@ -5,73 +5,70 @@ caption handling (loading captions, creating question-answer pairs).
 """
 from PIL import Image
 import os
+import math # Make sure this is at the top of the file
 
-def get_bucket_reso(image_width, image_height, min_reso, max_reso, long_side_step):
+def get_bucket_reso(image_width, image_height, min_reso, max_reso, long_side_step, output_multiple=64):
     """
-    Calculates the target resolution for an image based on bucketing parameters,
-    aiming to fit one side to a multiple of `long_side_step` while maintaining aspect ratio.
+    Calculates the target resolution for an image based on bucketing parameters.
 
     Args:
         image_width (int): Width of the original image.
         image_height (int): Height of the original image.
-        min_reso (int): Minimum allowed resolution for the longest side.
-        max_reso (int): Maximum allowed resolution for the longest side.
-        long_side_step (int): Step size for rounding the longest side. The longest side
-                              of the image will be rounded to the nearest multiple of this value.
+        min_reso (int): Minimum allowed resolution for the initial target longest side.
+        max_reso (int): Maximum allowed resolution for the initial target longest side,
+                        and also used to define max_pixel_area (max_reso * max_reso).
+        long_side_step (int): Step size for initially rounding the longest side.
+        output_multiple (int): Ensures final width and height are multiples of this value. Defaults to 64.
 
     Returns:
         tuple: Target width and height (target_width, target_height) for resizing.
-               Returns (0,0) if input dimensions are zero.
+               Returns (0,0) if input dimensions are zero or result in zero.
     """
     if image_width == 0 or image_height == 0:
-        # Avoid division by zero for invalid image dimensions
         return 0, 0
 
-    # Determine longest and shortest sides
-    if image_width > image_height:
-        longest_side = image_width
-        shortest_side = image_height
-    else:
-        longest_side = image_height
-        shortest_side = image_width
+    original_aspect_ratio = image_width / image_height
 
-    # Calculate target resolution for the longest side, clamped within min/max_reso
-    target_longest_side = round(longest_side / long_side_step) * long_side_step
+    # 1. Determine initial target for the longest side
+    if image_width > image_height:
+        original_longest_side = image_width
+    else:
+        original_longest_side = image_height
+    
+    # Round to nearest multiple of long_side_step, then clamp
+    target_longest_side = round(original_longest_side / long_side_step) * long_side_step
     target_longest_side = min(max_reso, max(min_reso, target_longest_side))
 
-    # Calculate aspect ratio and corresponding shortest side
-    if longest_side == 0: 
-        aspect_ratio = 1 # Avoid division by zero if original longest side was 0 (though caught above)
-    else:
-        aspect_ratio = shortest_side / longest_side
-    
-    target_shortest_side = int(round(target_longest_side * aspect_ratio))
-
-    # Ensure the shorter side is a multiple of a reasonable value (e.g., 64)
-    # This can be important for some model architectures to avoid unexpected behavior.
-    if target_shortest_side > 0:
-         target_shortest_side = max(64, round(target_shortest_side / 64) * 64)
-    else: # If target_shortest_side became 0 due to extreme aspect ratio and rounding
-        target_shortest_side = 64 # Default to a minimum viable dimension like 64
-
-
-    # Assign calculated target dimensions back based on original orientation
+    # 2. Calculate initial dimensions based on target_longest_side and aspect ratio
     if image_width > image_height:
-        target_width = target_longest_side
-        target_height = target_shortest_side
+        calc_width = target_longest_side
+        calc_height = int(round(calc_width / original_aspect_ratio))
     else:
-        target_width = target_shortest_side
-        target_height = target_longest_side
-        
-    # Final check to ensure dimensions are not zero if inputs were not zero.
-    # This handles edge cases where rounding or extreme aspect ratios might result in zero.
-    if image_width > 0 and image_height > 0:
-        if target_width == 0:
-            target_width = long_side_step if image_width > image_height else 64
-        if target_height == 0:
-            target_height = long_side_step if image_height >= image_width else 64
+        calc_height = target_longest_side
+        calc_width = int(round(calc_height * original_aspect_ratio))
 
-    return int(target_width), int(target_height)
+    # 3. Area Constraint
+    # Use max_reso to define the side of a maximum square area allowed
+    max_allowed_area = max_reso * max_reso  
+    current_area = calc_width * calc_height
+
+    if current_area > max_allowed_area:
+        scale_factor = math.sqrt(max_allowed_area / current_area)
+        calc_width = int(round(calc_width * scale_factor))
+        calc_height = int(round(calc_height * scale_factor))
+
+    # 4. Round both dimensions to be multiples of output_multiple (e.g., 64)
+    # Ensure dimensions are at least output_multiple
+    final_width = max(output_multiple, int(round(calc_width / output_multiple)) * output_multiple)
+    final_height = max(output_multiple, int(round(calc_height / output_multiple)) * output_multiple)
+    
+    # 5. Final check for zero dimensions (should be rare with max(output_multiple, ...) but good practice)
+    if final_width == 0 or final_height == 0:
+        # This case should ideally not be reached if output_multiple > 0 and inputs are valid
+        # Fallback to a minimal size if something went extremely wrong
+        return output_multiple, output_multiple 
+        
+    return final_width, final_height
 
 
 def load_and_preprocess_image(image_path, min_bucket_reso, max_bucket_reso, printf=print):
