@@ -22,6 +22,7 @@ This script handles:
 """
 import argparse
 import os
+import toml
 from PIL import Image
 import torch
 from torch.utils.data import Dataset, DataLoader
@@ -76,18 +77,19 @@ class SmolVLMDataset(Dataset):
         # Use accelerator.print if available, otherwise fallback to standard print
         self.printf = self.accelerator.print if self.accelerator else print
 
-        self.printf(f"Scanning folder: {image_folder} for images and captions...")
-        # Iterate through files in the image_folder
-        for filename in os.listdir(image_folder):
-            if filename.lower().endswith(self.image_extensions):
-                image_path = os.path.join(image_folder, filename)
-                # process_image_caption_item handles finding .txt file, loading caption, and creating QA pair
-                qa_pair = process_image_caption_item(image_path, log_missing_captions=True, printf=self.printf) # Pass printf
-                if qa_pair:
-                    self.data.append((image_path, qa_pair))
-                else:
-                    # Log if a caption or QA pair couldn't be formed for an image
-                    self.printf(f"Skipping image {image_path} due to missing or invalid caption/QA pair.")
+        self.printf(f"Scanning folder and subfolders: {image_folder} for images and captions...")
+        # Iterate through files in the image_folder and its subdirectories
+        for dirpath, dirnames, filenames in os.walk(image_folder):
+            for filename in filenames:
+                if filename.lower().endswith(self.image_extensions):
+                    image_path = os.path.join(dirpath, filename)
+                    # process_image_caption_item handles finding .txt file, loading caption, and creating QA pair
+                    qa_pair = process_image_caption_item(image_path, log_missing_captions=True, printf=self.printf) # Pass printf
+                    if qa_pair:
+                        self.data.append((image_path, qa_pair))
+                    else:
+                        # Log if a caption or QA pair couldn't be formed for an image
+                        self.printf(f"Skipping image {image_path} due to missing or invalid caption/QA pair.")
         self.printf(f"Found {len(self.data)} valid image-caption pairs.")
 
     def __len__(self):
@@ -267,12 +269,55 @@ def main(args):
         processor.tokenizer.pad_token_id = processor.tokenizer.eos_token_id # Crucially, set token ID too
         accelerator.print(f"Set tokenizer pad_token to eos_token (ID: {processor.tokenizer.eos_token_id}).")
 
+    # --- Dataset Configuration Loading ---
+    dataset_params = {}
+    if args.dataset_config_file and os.path.exists(args.dataset_config_file):
+        accelerator.print(f"Loading dataset configuration from TOML file: {args.dataset_config_file}")
+        try:
+            config_from_toml = toml.load(args.dataset_config_file)
+            dataset_config_table = config_from_toml.get('dataset', {})
+            
+            dataset_params['image_folder'] = dataset_config_table.get('image_folder')
+            dataset_params['min_bucket_reso'] = dataset_config_table.get('min_bucket_reso')
+            dataset_params['max_bucket_reso'] = dataset_config_table.get('max_bucket_reso')
+            
+            # Filter out None values so they don't override CLI defaults if not specified in TOML
+            dataset_params = {k: v for k, v in dataset_params.items() if v is not None}
+            accelerator.print(f"Loaded parameters from TOML: {dataset_params}")
+        except Exception as e:
+            accelerator.print(f"Error loading or parsing TOML file {args.dataset_config_file}: {e}. Proceeding with CLI args and defaults.")
+    
+    # Determine final dataset parameters (CLI > TOML > argparse defaults)
+    image_folder = args.image_folder if args.image_folder is not None else dataset_params.get('image_folder')
+
+    # min_bucket_reso resolution:
+    if args.min_bucket_reso is not None and args.min_bucket_reso != parser.get_default("min_bucket_reso"): # CLI override
+        min_bucket_reso = args.min_bucket_reso
+    elif 'min_bucket_reso' in dataset_params: # TOML value
+        min_bucket_reso = dataset_params['min_bucket_reso']
+    else: # Argparse default
+        min_bucket_reso = args.min_bucket_reso
+
+    # max_bucket_reso resolution:
+    if args.max_bucket_reso is not None and args.max_bucket_reso != parser.get_default("max_bucket_reso"): # CLI override
+        max_bucket_reso = args.max_bucket_reso
+    elif 'max_bucket_reso' in dataset_params: # TOML value
+        max_bucket_reso = dataset_params['max_bucket_reso']
+    else: # Argparse default
+        max_bucket_reso = args.max_bucket_reso
+
+    if image_folder is None:
+        accelerator.print("Error: image_folder must be specified either via --image_folder or in the dataset_config_file's [dataset] table. Exiting.")
+        return
+
+    accelerator.print(f"Final dataset parameters: image_folder='{image_folder}', min_bucket_reso={min_bucket_reso}, max_bucket_reso={max_bucket_reso}")
+
     # Initialize dataset
     accelerator.print("Initializing dataset...")
     train_dataset = SmolVLMDataset(
-        args.image_folder,
-        args.min_bucket_reso,
-        args.max_bucket_reso,
+        image_folder,
+        min_bucket_reso,
+        max_bucket_reso,
         processor,
         args.max_token_length,
         accelerator=accelerator # Pass accelerator for logging within dataset
@@ -585,7 +630,8 @@ if __name__ == "__main__":
 
     # --- Core Arguments ---
     # Dataset and Paths
-    parser.add_argument("--image_folder", type=str, required=True, help="Path to the folder containing images and corresponding .txt caption files.")
+    parser.add_argument("--dataset_config_file", type=str, default=None, help="Path to a TOML file for dataset configuration. Settings in this file can be overridden by command-line arguments.")
+    parser.add_argument("--image_folder", type=str, default=None, help="Path to the folder containing images and corresponding .txt caption files. Can also be set in dataset_config_file.")
     parser.add_argument("--output_dir", type=str, required=True, help="Root directory to save trained models, checkpoints, logs, and samples. A subdirectory named by --output_name will be created here.")
     parser.add_argument("--output_name", type=str, required=True, help="Specific name for this training run's output subdirectory (created within output_dir). Used for organizing outputs and naming logging runs.")
     
