@@ -74,7 +74,7 @@ def get_bucket_reso(image_width, image_height, min_reso, max_reso, long_side_ste
     return int(target_width), int(target_height)
 
 
-def load_and_preprocess_image(image_path, min_bucket_reso, max_bucket_reso):
+def load_and_preprocess_image(image_path, min_bucket_reso, max_bucket_reso, printf=print):
     """
     Loads an image from the given path, determines its bucket resolution,
     and resizes it to that resolution.
@@ -83,6 +83,7 @@ def load_and_preprocess_image(image_path, min_bucket_reso, max_bucket_reso):
         image_path (str): Path to the image file.
         min_bucket_reso (int): Minimum resolution for bucketing (passed to get_bucket_reso).
         max_bucket_reso (int): Maximum resolution for bucketing (passed to get_bucket_reso).
+        printf (function): Function to use for printing messages.
 
     Returns:
         PIL.Image.Image: The processed (resized) PIL Image object in RGB format,
@@ -94,7 +95,7 @@ def load_and_preprocess_image(image_path, min_bucket_reso, max_bucket_reso):
         original_width, original_height = img.size
 
         if original_width == 0 or original_height == 0:
-            print(f"Warning: Image at {image_path} has zero dimension.")
+            printf(f"Warning: Image at {image_path} has zero dimension.")
             return None # Invalid image dimensions
 
         # Determine target dimensions using bucketing logic
@@ -107,7 +108,7 @@ def load_and_preprocess_image(image_path, min_bucket_reso, max_bucket_reso):
         )
 
         if target_width == 0 or target_height == 0:
-            print(f"Warning: Calculated target dimensions for {image_path} are zero. Skipping resize.")
+            printf(f"Warning: Calculated target dimensions for {image_path} are zero. Skipping resize.")
             return None # Indicates an issue with bucketing result
 
         # Choose resampling filter based on whether downscaling or upscaling
@@ -120,11 +121,11 @@ def load_and_preprocess_image(image_path, min_bucket_reso, max_bucket_reso):
         return processed_image
 
     except FileNotFoundError:
-        print(f"Error: Image file not found at {image_path}")
+        printf(f"Error: Image file not found at {image_path}")
         return None
     except Exception as e:
         # Catch other PIL errors or unexpected issues
-        print(f"Error processing image {image_path}: {e}")
+        printf(f"Error processing image {image_path}: {e}")
         return None
 
 # --- Caption Handling Functions ---
@@ -143,12 +144,13 @@ def get_caption_path(image_path):
     base, _ = os.path.splitext(image_path)
     return base + ".txt"
 
-def load_caption(caption_path):
+def load_caption(caption_path, printf=print):
     """
     Reads the content of the caption file.
 
     Args:
         caption_path (str): Path to the caption file.
+        printf (function): Function to use for printing messages.
 
     Returns:
         str: The caption string (stripped of leading/trailing whitespace), 
@@ -159,10 +161,10 @@ def load_caption(caption_path):
             caption = f.read().strip()
         return caption
     except FileNotFoundError:
-        # This is a common case (image without a caption), so often handled silently
+        # This is a common case (image without a caption), so often handled silently by process_image_caption_item
         return None
     except Exception as e:
-        print(f"Error loading caption file {caption_path}: {e}")
+        printf(f"Error loading caption file {caption_path}: {e}")
         return None
 
 def create_qa_pair(caption_text):
@@ -194,7 +196,7 @@ def create_qa_pair(caption_text):
     )
     return {"question": fixed_question, "answer": caption_text}
 
-def process_image_caption_item(image_path, log_missing_captions=True):
+def process_image_caption_item(image_path, log_missing_captions=True, printf=print):
     """
     Orchestrates finding, loading, and forming a Q&A pair for a given image.
 
@@ -202,6 +204,7 @@ def process_image_caption_item(image_path, log_missing_captions=True):
         image_path (str): Path to the image file.
         log_missing_captions (bool): If True, logs a warning when a caption file
                                      is not found for an image. Defaults to True.
+        printf (function): Function to use for printing messages (e.g., print or accelerator.print).
 
     Returns:
         dict: A Q&A pair dictionary (from `create_qa_pair`) if a caption is found
@@ -209,12 +212,12 @@ def process_image_caption_item(image_path, log_missing_captions=True):
               if any step in the process fails.
     """
     caption_path = get_caption_path(image_path)
-    caption_text = load_caption(caption_path)
+    caption_text = load_caption(caption_path, printf=printf) # Pass printf down
 
     if caption_text is None:
         if log_missing_captions:
             # This helps identify images that might be missing their corresponding text data.
-            print(f"Warning: Caption file not found for {image_path}, skipping image.")
+            printf(f"Warning: Caption file not found for {image_path}, skipping image.")
         return None # Indicates no caption available or an error loading it
     
     # If caption text is loaded, create the Q&A pair

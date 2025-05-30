@@ -1,31 +1,43 @@
 """
 Main training script for fine-tuning SmolVLM-style Vision-Language Models
-on image-caption datasets.
+on image-caption datasets using Hugging Face Accelerate for distributed training
+and PEFT (LoRA/QLoRA) for efficient fine-tuning.
 
 This script handles:
-1.  Argument parsing for training configuration.
-2.  Dataset creation (`SmolVLMDataset`) which loads images and prepares
-    image-text pairs using a Hugging Face processor. This includes image
-    bucketing/resizing and constructing appropriate chat-templated prompts.
-3.  Label masking for training, ensuring loss is computed only on the
-    assistant's (answer) part of the conversation.
-4.  DataLoader setup.
+1.  Argument parsing for detailed training configuration.
+2.  Distributed training setup using Hugging Face Accelerate.
+3.  Dataset creation (`SmolVLMDataset`) for image-caption pairs, including
+    image bucketing/resizing and chat-templated prompt construction.
+4.  Optional PEFT (LoRA/QLoRA) setup for parameter-efficient fine-tuning,
+    including 4-bit and 8-bit quantization.
 5.  Model loading (e.g., `HuggingFaceTB/SmolVLM-Instruct`) with support for
-    mixed precision (fp16, bf16) and Flash Attention 2.
+    mixed precision (fp16, bf16), Flash Attention 2, and quantization.
 6.  Optimizer setup (AdamW).
-7.  A training loop that iterates through epochs and batches, performs
-    forward/backward passes, and updates model weights.
-8.  Saving the trained model and processor.
-9.  Optional sample generation after training to qualitatively assess model performance.
+7.  A training loop with gradient accumulation, gradient clipping, and
+    logging (TensorBoard/W&B).
+8.  Comprehensive checkpointing: saving and resuming model state (full or adapter),
+    optimizer, scheduler, processor, and custom tracker state.
+9.  Saving the final model (full or adapter) and processor.
+10. Optional sample generation after training.
 """
 import argparse
 import os
 from PIL import Image
 import torch
 from torch.utils.data import Dataset, DataLoader
-from transformers import AutoProcessor, AutoModelForVision2Seq, AdamW
+from transformers import AutoProcessor, AutoModelForVision2Seq
 from tqdm import tqdm 
 import random 
+import datetime # for ddp_timeout
+import json # for tracker_state.json
+from torch.optim import AdamW # Use torch.optim.AdamW
+
+from accelerate import Accelerator, InitProcessGroupKwargs
+from accelerate.utils import set_seed
+
+from peft import get_peft_model, LoraConfig, TaskType
+from transformers import BitsAndBytesConfig # For QLoRA
+import torch # Ensure torch is imported for BitsAndBytesConfig dtypes
 
 from library.smolvlm_train_util import load_and_preprocess_image, process_image_caption_item
 
@@ -40,7 +52,7 @@ class SmolVLMDataset(Dataset):
         max_token_length (int): Maximum sequence length for tokenized inputs.
         data (list): A list of tuples, where each tuple contains (image_path, qa_pair_dict).
     """
-    def __init__(self, image_folder, min_bucket_reso, max_bucket_reso, processor, max_token_length):
+    def __init__(self, image_folder, min_bucket_reso, max_bucket_reso, processor, max_token_length, accelerator=None):
         """
         Initializes the SmolVLMDataset.
 
@@ -51,6 +63,7 @@ class SmolVLMDataset(Dataset):
             max_bucket_reso (int): Maximum resolution for image bucketing.
             processor (AutoProcessor): The Hugging Face processor.
             max_token_length (int): Max sequence length for tokenized inputs.
+            accelerator (Accelerator, optional): Accelerator instance for distributed logging.
         """
         self.min_bucket_reso = min_bucket_reso
         self.max_bucket_reso = max_bucket_reso
@@ -58,20 +71,24 @@ class SmolVLMDataset(Dataset):
         self.max_token_length = max_token_length
         self.data = []
         self.image_extensions = ('.jpg', '.jpeg', '.png', '.webp') # Supported image types
+        self.accelerator = accelerator
 
-        print(f"Scanning folder: {image_folder} for images and captions...")
+        # Use accelerator.print if available, otherwise fallback to standard print
+        self.printf = self.accelerator.print if self.accelerator else print
+
+        self.printf(f"Scanning folder: {image_folder} for images and captions...")
         # Iterate through files in the image_folder
         for filename in os.listdir(image_folder):
             if filename.lower().endswith(self.image_extensions):
                 image_path = os.path.join(image_folder, filename)
                 # process_image_caption_item handles finding .txt file, loading caption, and creating QA pair
-                qa_pair = process_image_caption_item(image_path, log_missing_captions=True)
+                qa_pair = process_image_caption_item(image_path, log_missing_captions=True, printf=self.printf) # Pass printf
                 if qa_pair:
                     self.data.append((image_path, qa_pair))
                 else:
                     # Log if a caption or QA pair couldn't be formed for an image
-                    print(f"Skipping image {image_path} due to missing or invalid caption/QA pair.")
-        print(f"Found {len(self.data)} valid image-caption pairs.")
+                    self.printf(f"Skipping image {image_path} due to missing or invalid caption/QA pair.")
+        self.printf(f"Found {len(self.data)} valid image-caption pairs.")
 
     def __len__(self):
         """Returns the total number of image-caption pairs in the dataset."""
@@ -108,10 +125,13 @@ class SmolVLMDataset(Dataset):
         image_path, qa_pair = self.data[idx]
 
         # Load and preprocess the image (bucketing, resizing)
-        pil_image = load_and_preprocess_image(image_path, self.min_bucket_reso, self.max_bucket_reso)
+        # Pass self.printf to the image loading function
+        pil_image = load_and_preprocess_image(image_path, self.min_bucket_reso, self.max_bucket_reso, printf=self.printf)
 
         if pil_image is None:
-            print(f"Warning: load_and_preprocess_image returned None for {image_path}. Skipping this item.")
+            # self.printf will be used internally by load_and_preprocess_image if an error occurs
+            # No need for an additional print here unless it's a different message.
+            # self.printf(f"Warning: load_and_preprocess_image returned None for {image_path} (logged internally). Skipping this item.")
             return None # Handled by collate_fn
 
         question = qa_pair["question"]
@@ -142,7 +162,8 @@ class SmolVLMDataset(Dataset):
                 max_length=self.max_token_length
             )
         except Exception as e:
-            print(f"Error during processor call for image {image_path} with prompt '{prompt_text[:100]}...'. Error: {e}")
+            current_printf = self.accelerator.print if hasattr(self, 'accelerator') and self.accelerator else print
+            current_printf(f"Error during processor call for image {image_path} with prompt '{prompt_text[:100]}...'. Error: {e}")
             return None # Handled by collate_fn
 
         # Remove the batch dimension that processor might add; DataLoader will add its own.
@@ -176,7 +197,8 @@ class SmolVLMDataset(Dataset):
         else:
             # This implies the prompt itself (user part) filled or exceeded max_token_length.
             # All tokens will be masked, meaning no effective label for this instance.
-            print(f"Warning: Prompt length ({prompt_len}) is >= total sequence length ({labels.shape[0]}) for {image_path}. Entire label sequence will be masked.")
+            current_printf = self.accelerator.print if hasattr(self, 'accelerator') and self.accelerator else print
+            current_printf(f"Warning: Prompt length ({prompt_len}) is >= total sequence length ({labels.shape[0]}) for {image_path}. Entire label sequence will be masked.")
             labels[:] = -100
 
         # Also, explicitly mask any padding tokens in the labels.
@@ -222,36 +244,48 @@ def main(args):
     - Saving the trained model and processor.
     - Generating sample image-caption pairs using the trained model.
     """
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"Using device: {device}")
+    accelerator = Accelerator(
+        gradient_accumulation_steps=args.gradient_accumulation_steps,
+        mixed_precision=args.mixed_precision if args.mixed_precision != "no" else None,
+        log_with=args.log_with,
+        project_dir=args.output_dir, 
+        kwargs_handlers=[InitProcessGroupKwargs(timeout=datetime.timedelta(seconds=3600))] 
+    )
+    set_seed(args.seed)
+    if args.log_with: # Initialize trackers if log_with is set
+        accelerator.init_trackers("smolvlm_finetune_" + args.output_name, config=vars(args))
+
+    device = accelerator.device
+    accelerator.print(f"Using device: {device}")
 
     # Initialize Hugging Face processor
-    print("Initializing processor...")
+    accelerator.print("Initializing processor...")
     processor = AutoProcessor.from_pretrained(args.model_name_or_path, trust_remote_code=True)
     # Set pad_token if not already defined (common for some models like Llama)
     if processor.tokenizer.pad_token is None:
         processor.tokenizer.pad_token = processor.tokenizer.eos_token
         processor.tokenizer.pad_token_id = processor.tokenizer.eos_token_id # Crucially, set token ID too
-        print(f"Set tokenizer pad_token to eos_token (ID: {processor.tokenizer.eos_token_id}).")
+        accelerator.print(f"Set tokenizer pad_token to eos_token (ID: {processor.tokenizer.eos_token_id}).")
 
     # Initialize dataset
-    print("Initializing dataset...")
+    accelerator.print("Initializing dataset...")
     train_dataset = SmolVLMDataset(
         args.image_folder,
         args.min_bucket_reso,
         args.max_bucket_reso,
         processor,
-        args.max_token_length 
+        args.max_token_length,
+        accelerator=accelerator # Pass accelerator for logging within dataset
     )
 
     if len(train_dataset) == 0:
-        print("No training data found. Please check your image_folder and caption files. Exiting.")
+        accelerator.print("No training data found. Please check your image_folder and caption files. Exiting.")
         return
 
-    print(f"Found {len(train_dataset)} image-caption pairs for training.")
+    accelerator.print(f"Found {len(train_dataset)} image-caption pairs for training.")
 
     # Initialize DataLoader
-    print("Initializing DataLoader...")
+    accelerator.print("Initializing DataLoader...")
     train_dataloader = DataLoader(
         train_dataset,
         batch_size=args.train_batch_size,
@@ -260,124 +294,204 @@ def main(args):
     )
 
     # Load model
-    print("Loading model...")
+    accelerator.print("Loading model...")
+
+    quantization_config = None
     model_dtype = torch.float32 # Default for "no" mixed precision or CPU
     if args.mixed_precision == "bf16":
         model_dtype = torch.bfloat16
     elif args.mixed_precision == "fp16":
         model_dtype = torch.float16
 
+    if args.load_in_4bit:
+        accelerator.print("Loading base model in 4-bit for QLoRA...")
+        quantization_config = BitsAndBytesConfig(
+            load_in_4bit=True,
+            bnb_4bit_compute_dtype=model_dtype, # Use determined model_dtype
+            bnb_4bit_quant_type="nf4",
+            bnb_4bit_use_double_quant=True,
+        )
+    elif args.load_in_8bit:
+        accelerator.print("Loading base model in 8-bit for QLoRA...")
+        quantization_config = BitsAndBytesConfig(
+            load_in_8bit=True
+        )
+
     attn_implementation = "eager" # Default attention
-    if device.type == "cuda":
+    if str(device) == "cuda": # Check device type from accelerator
         # Try to use Flash Attention 2 if available and on CUDA
         try:
             import flash_attn # Check if flash_attn is installed
             attn_implementation = "flash_attention_2"
-            print("Attempting to use flash_attention_2.")
+            accelerator.print("Attempting to use flash_attention_2.")
         except ImportError:
-            print("flash_attn library not found, defaulting to 'eager' attention implementation.")
+            accelerator.print("flash_attn library not found, defaulting to 'eager' attention implementation.")
     
     model = AutoModelForVision2Seq.from_pretrained(
         args.model_name_or_path,
-        torch_dtype=model_dtype,      # Set dtype for model weights
+        torch_dtype=model_dtype if quantization_config is None else None, # torch_dtype not to be used with BitsAndBytesConfig
         trust_remote_code=True,       # Required for some custom models
-        attn_implementation=attn_implementation # Use Flash Attention 2 if available
+        attn_implementation=attn_implementation, # Use Flash Attention 2 if available
+        quantization_config=quantization_config
     )
-    model.to(device) # Move model to the target device
-    print(f"Model loaded on {device} with dtype {model_dtype} and attention: {attn_implementation}.")
+    
+    accelerator.print(f"Base model loaded. Using dtype: {model.dtype}, Attention: {attn_implementation}.")
+    if quantization_config:
+        accelerator.print(f"Quantization config applied: {quantization_config.to_dict()}")
+
+
+    if args.use_peft:
+        accelerator.print("Applying PEFT (LoRA/QLoRA) to the model...")
+        if not args.peft_target_modules:
+             accelerator.print("Warning: --peft_target_modules is empty or not provided. LoRA may not be applied effectively. Common targets: q_proj, v_proj, k_proj, o_proj, fc1, fc2, etc., within the language_model part of SmolVLM.")
+
+        peft_config = LoraConfig(
+            r=args.peft_lora_r,
+            lora_alpha=args.peft_lora_alpha,
+            lora_dropout=args.peft_lora_dropout,
+            target_modules=args.peft_target_modules if args.peft_target_modules else None,
+            bias="none",
+            task_type=TaskType.SEQ_2_SEQ_LM, # SmolVLM is Vision2Seq
+        )
+        model = get_peft_model(model, peft_config)
+        accelerator.print("PEFT model created. Trainable parameters:")
+        model.print_trainable_parameters() # PeftModel has this utility method
+
+    # model.to(device) # Accelerator handles device placement - This line was already commented
+    # accelerator.print(f"Model loaded with dtype {model_dtype} and attention: {attn_implementation}.") # Replaced by more specific prints above
 
     # Setup optimizer
-    print("Setting up optimizer...")
+    accelerator.print("Setting up optimizer...")
     optimizer = AdamW(model.parameters(), lr=args.learning_rate)
+    
+    # Prepare model, optimizer, and dataloader with accelerator
+    model, optimizer, train_dataloader = accelerator.prepare(
+        model, optimizer, train_dataloader
+    )
 
-    # Setup GradScaler for fp16 mixed precision
-    scaler = None
-    if args.mixed_precision == "fp16" and device.type == "cuda":
-        scaler = torch.cuda.amp.GradScaler()
-        print("Using GradScaler for fp16 mixed precision.")
+    # Resuming from Checkpoint
+    start_epoch = 0
+    global_step = 0
+    if args.resume_from_checkpoint:
+        if os.path.isdir(args.resume_from_checkpoint):
+            accelerator.print(f"Resuming from checkpoint: {args.resume_from_checkpoint}")
+            accelerator.load_state(args.resume_from_checkpoint)
+            tracker_file = os.path.join(args.resume_from_checkpoint, "tracker_state.json")
+            if os.path.exists(tracker_file):
+                with open(tracker_file, "r") as f:
+                    tracker_state = json.load(f)
+                completed_epoch = tracker_state.get("epoch", -1) 
+                global_step = tracker_state.get("global_step", 0)
+                start_epoch = completed_epoch + 1 # Start from the next epoch
+                accelerator.print(f"Resumed from completed epoch {completed_epoch} and global_step {global_step}. Starting epoch {start_epoch}.")
+            else:
+                accelerator.print(f"tracker_state.json not found in {args.resume_from_checkpoint}. Resuming optimizer/scheduler/model weights only. Epoch/step will start from scratch unless parsed from dir name.")
+        else:
+            accelerator.print(f"Checkpoint {args.resume_from_checkpoint} not found or not a directory. Starting from scratch.")
 
     # Training loop
-    print(f"Starting training for {args.num_train_epochs} epochs...")
-    for epoch in range(args.num_train_epochs):
+    accelerator.print(f"Starting training from epoch {start_epoch} for {args.num_train_epochs} total epochs...")
+    for epoch in range(start_epoch, args.num_train_epochs):
         model.train() # Set model to training mode
         epoch_loss = 0.0
-        num_batches = 0
+        num_batches_processed_this_epoch = 0 # Changed from num_batches
         
         # Progress bar for batches within an epoch
-        progress_bar = tqdm(train_dataloader, desc=f"Epoch {epoch+1}/{args.num_train_epochs}")
+        progress_bar = tqdm(train_dataloader, desc=f"Epoch {epoch+1}/{args.num_train_epochs}", disable=not accelerator.is_local_main_process)
         for batch_idx, batch in enumerate(progress_bar):
             if batch is None: # Skip if collate_fn returned None (empty batch after filtering)
-                print(f"Skipping empty or invalid batch {batch_idx+1}.")
+                accelerator.print(f"Skipping empty or invalid batch {batch_idx+1}.")
                 continue
 
-            # Move batch data to the target device
-            batch_on_device = {}
-            for k, v in batch.items():
-                if isinstance(v, torch.Tensor):
-                    batch_on_device[k] = v.to(device)
-                # Non-tensor items (if any) are kept as is, though usually all items are tensors
+            # Move batch data to the target device - REMOVED (handled by Accelerator via prepare)
             
-            optimizer.zero_grad() # Clear previous gradients
-
-            # Mixed precision context managers
-            if args.mixed_precision == "bf16" and device.type == "cuda":
-                with torch.autocast(device_type=device.type, dtype=torch.bfloat16):
-                    outputs = model(**batch_on_device) # Forward pass
-                    loss = outputs.loss
-                # Backward pass and optimizer step are outside autocast for bf16
-                if loss is not None: 
-                    loss.backward()
-                    optimizer.step()
-            elif args.mixed_precision == "fp16" and device.type == "cuda" and scaler is not None:
-                with torch.autocast(device_type=device.type, dtype=torch.float16):
-                    outputs = model(**batch_on_device) # Forward pass
-                    loss = outputs.loss
-                if loss is not None:
-                    scaler.scale(loss).backward() # Scale loss for fp16
-                    scaler.step(optimizer)       # Optimizer step
-                    scaler.update()              # Update scaler
-            else: # "no" mixed precision or CPU training
-                outputs = model(**batch_on_device) # Forward pass
+            # optimizer.zero_grad() # Moved into accumulate block
+            
+            # Mixed precision context managers - REMOVED (handled by Accelerator)
+            
+            # Training step logic with accelerator.accumulate
+            with accelerator.accumulate(model):
+                optimizer.zero_grad() # Zero gradients at the start of accumulation
+                outputs = model(**batch) 
                 loss = outputs.loss
+
                 if loss is not None:
-                    loss.backward()
+                    accelerator.backward(loss)
+                    if accelerator.sync_gradients: # True if this is an optimization step
+                        if args.max_grad_norm is not None and args.max_grad_norm > 0:
+                            accelerator.clip_grad_norm_(model.parameters(), args.max_grad_norm)
                     optimizer.step()
+                
+                # Loss accumulation and progress bar update (inside `if loss is not None:`)
+                if loss is not None:
+                    current_loss = loss.item()
+                    epoch_loss += current_loss 
+                    num_batches_processed_this_epoch += 1 
+
+                    if accelerator.is_local_main_process:
+                        progress_bar.set_postfix({"loss": current_loss, "avg_epoch_loss": epoch_loss / num_batches_processed_this_epoch})
+                    
+                    # Log step loss when gradients are synced (actual optimizer step)
+                    if accelerator.sync_gradients:
+                         if global_step > 0 and (global_step % 10 == 0 or (args.save_every_n_steps == 1 and global_step > 0)) : # Log every 10 opt steps or if saving every step
+                            accelerator.log({"train/step_loss": current_loss}, step=global_step)
             
-            if loss is not None:
-                current_loss = loss.item()
-                epoch_loss += current_loss
-                num_batches += 1
-                # Update progress bar postfix with current loss and running epoch average
-                if (batch_idx + 1) % 10 == 0: # Log every 10 steps
-                    progress_bar.set_postfix({"loss": current_loss, "avg_epoch_loss": epoch_loss / num_batches})
-            else:
-                # This might happen if all items in a batch had labels fully masked, or model issue.
-                print(f"Warning: Batch {batch_idx+1} in epoch {epoch+1} produced no loss.")
+            # Increment global_step and save periodic checkpoints (after accumulation block)
+            if loss is not None: # Only increment step if a valid forward/backward pass happened
+                if accelerator.sync_gradients: # This ensures global_step increments only on actual optimization steps
+                    global_step += 1
+                    if args.save_every_n_steps and global_step % args.save_every_n_steps == 0 and global_step > 0:
+                        if accelerator.is_main_process:
+                            save_path = os.path.join(args.output_dir, f"checkpoint-step-{global_step}")
+                            accelerator.save_state(save_path)
+                            # Save processor with the checkpoint
+                            processor.save_pretrained(save_path) 
+                            tracker_state = {"epoch": epoch, "global_step": global_step} # Save completed epoch and current step
+                            with open(os.path.join(save_path, "tracker_state.json"), "w") as f:
+                                json.dump(tracker_state, f)
+                            accelerator.print(f"Saved checkpoint, processor, and tracker state to {save_path}")
+            
+            if loss is None and accelerator.is_local_main_process: # Moved this condition here
+                 accelerator.print(f"Warning: Batch {batch_idx+1} in epoch {epoch+1} produced no loss.")
 
 
-        avg_epoch_loss = epoch_loss / num_batches if num_batches > 0 else 0
-        print(f"Epoch {epoch+1} completed. Average Loss: {avg_epoch_loss:.4f}")
+        if num_batches_processed_this_epoch > 0:
+            avg_epoch_loss = epoch_loss / num_batches_processed_this_epoch
+            accelerator.log({"train/epoch_loss": avg_epoch_loss}, step=epoch) 
+            accelerator.print(f"Epoch {epoch+1} completed. Average Loss: {avg_epoch_loss:.4f}")
+        else:
+            accelerator.print(f"Epoch {epoch+1} completed. No batches processed or no loss recorded.")
 
-    print("Training finished.")
+    accelerator.print("Training finished.")
 
     # Save model and processor
     # args.output_dir is already the specific path for this run's outputs (e.g., output_root/output_name_arg)
     model_save_path = args.output_dir 
-    print(f"Saving model and processor to {model_save_path}...")
-    model.save_pretrained(model_save_path) 
-    processor.save_pretrained(model_save_path) # Save processor to the same directory
-    print(f"Model and processor saved successfully.")
-    print(f"Note: Actual model file format (e.g., .safetensors) depends on Hugging Face defaults and installed libraries.")
-    print(f"The argument --save_model_as ('{args.save_model_as}') is noted, but save_pretrained typically defaults to safetensors if available.")
+    accelerator.print(f"Saving model and processor to {model_save_path}...")
+    # model.save_pretrained(model_save_path) # Will be replaced by accelerator save
+    # processor.save_pretrained(model_save_path) 
+    # accelerator.print(f"Model and processor saved successfully.")
+    # accelerator.print(f"Note: Actual model file format (e.g., .safetensors) depends on Hugging Face defaults and installed libraries.")
+    # accelerator.print(f"The argument --save_model_as ('{args.save_model_as}') is noted, but save_pretrained typically defaults to safetensors if available.")
+    if accelerator.is_main_process:
+        unwrapped_model = accelerator.unwrap_model(model)
+        unwrapped_model.save_pretrained(model_save_path) # Saves adapter if PEFT, full model otherwise
+        processor.save_pretrained(model_save_path)
+    accelerator.wait_for_everyone()
+    accelerator.print(f"Model (adapter if PEFT used) and processor saved successfully to {model_save_path}.")
+    if args.log_with:
+        accelerator.end_training()
+
 
     # --- Sample Generation ---
-    if args.num_sample_answers > 0 and len(train_dataset.data) > 0:
-        print("\nStarting sample generation...")
-        model.eval() # Set model to evaluation mode for inference
+    if accelerator.is_main_process and args.num_sample_answers > 0 and len(train_dataset.data) > 0:
+        accelerator.print("\nStarting sample generation...")
+        unwrapped_model = accelerator.unwrap_model(model) # Use unwrapped model
+        unwrapped_model.eval() # Set model to evaluation mode for inference
         
         sample_dir = os.path.join(model_save_path, "samples") # Create a "samples" subdir
         os.makedirs(sample_dir, exist_ok=True)
-        print(f"Generating up to {args.num_sample_answers} samples in {sample_dir}...")
+        accelerator.print(f"Generating up to {args.num_sample_answers} samples in {sample_dir}...")
 
         available_data = train_dataset.data # Use data loaded by the dataset
         num_to_sample = min(args.num_sample_answers, len(available_data))
@@ -392,10 +506,11 @@ def main(args):
             "during training. Commas are not allowed inside of curly braces."
         )
 
-        for image_path, _ in tqdm(selected_samples, desc="Generating Samples"): # original_qa_pair not needed for inference here
-            pil_image = load_and_preprocess_image(image_path, args.min_bucket_reso, args.max_bucket_reso)
+        for image_path, _ in tqdm(selected_samples, desc="Generating Samples", disable=not accelerator.is_local_main_process): # original_qa_pair not needed for inference here
+            # Call load_and_preprocess_image once, passing accelerator.print for logging
+            pil_image = load_and_preprocess_image(image_path, args.min_bucket_reso, args.max_bucket_reso, printf=accelerator.print)
             if pil_image is None:
-                print(f"Warning: Could not load/preprocess image {image_path} for sampling. Skipping.")
+                # Message will be printed inside load_and_preprocess_image if an error occurs
                 continue
 
             # Prepare input for inference using chat template
@@ -423,11 +538,11 @@ def main(args):
                 padding=True, # Allow padding for generation if needed
                 truncation=True, 
                 max_length=args.max_token_length 
-            ).to(device)
+            ).to(accelerator.device) # Move inputs to accelerator device
 
             # Generate text
             with torch.no_grad(): # Disable gradient calculations for inference
-                generated_ids = model.generate(
+                generated_ids = unwrapped_model.generate( # Use unwrapped_model
                     **inputs_for_inference, 
                     max_new_tokens=args.sample_max_new_tokens, 
                     do_sample=False, # Use greedy search for deterministic samples
@@ -449,49 +564,76 @@ def main(args):
                 # Save the original (bucketed) PIL image
                 pil_image.save(os.path.join(sample_dir, f"{base_filename}.png"))
             except Exception as e:
-                print(f"Error saving sample image {base_filename}.png: {e}")
+                accelerator.print(f"Error saving sample image {base_filename}.png: {e}")
 
             try:
                 with open(os.path.join(sample_dir, f"{base_filename}.txt"), "w", encoding="utf-8") as f:
                     f.write(f"Question:\n{fixed_question_for_sampling}\n\nGenerated Answer:\n{generated_answer}\n")
-                print(f"Saved sample for {base_filename}")
+                accelerator.print(f"Saved sample for {base_filename}")
             except Exception as e:
-                print(f"Error saving sample text {base_filename}.txt: {e}")
+                accelerator.print(f"Error saving sample text {base_filename}.txt: {e}")
 
-        print("Sample generation finished.")
+        accelerator.print("Sample generation finished.")
     # model.train() # Not strictly necessary here as it's the end of main()
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="Main training script for fine-tuning SmolVLM models on image-caption datasets.",
+        description="Main training script for fine-tuning SmolVLM models on image-caption datasets with Accelerate and PEFT.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter # Show default values in help
     )
 
+    # --- Core Arguments ---
     # Dataset and Paths
     parser.add_argument("--image_folder", type=str, required=True, help="Path to the folder containing images and corresponding .txt caption files.")
-    parser.add_argument("--output_dir", type=str, required=True, help="Root directory to save the trained model, processor, and samples.")
-    parser.add_argument("--output_name", type=str, required=True, help="Specific name for this training run's output directory (created within output_dir).")
+    parser.add_argument("--output_dir", type=str, required=True, help="Root directory to save trained models, checkpoints, logs, and samples. A subdirectory named by --output_name will be created here.")
+    parser.add_argument("--output_name", type=str, required=True, help="Specific name for this training run's output subdirectory (created within output_dir). Used for organizing outputs and naming logging runs.")
     
     # Image Bucketing and Tokenization
     parser.add_argument("--min_bucket_reso", type=int, default=256, help="Minimum resolution (longest side) for image bucketing during preprocessing.")
     parser.add_argument("--max_bucket_reso", type=int, default=1536, help="Maximum resolution (longest side) for image bucketing during preprocessing.")
     parser.add_argument("--max_token_length", type=int, default=512, help="Maximum token length for the processor (text sequence length). Inputs will be padded/truncated to this length.")
 
-    # Model and Training Parameters
+    # Model Parameters
     parser.add_argument("--model_name_or_path", type=str, default="HuggingFaceTB/SmolVLM-Instruct", help="Hugging Face model name or path to a local model directory.")
-    parser.add_argument("--learning_rate", type=float, default=1e-5, help="Learning rate for the AdamW optimizer.")
+    
+    # Training Hyperparameters
+    parser.add_argument("--learning_rate", type=float, default=1e-5, help="Initial learning rate for the AdamW optimizer.")
     parser.add_argument("--num_train_epochs", type=int, default=10, help="Total number of training epochs to perform.")
-    parser.add_argument("--train_batch_size", type=int, default=1, help="Batch size per device for training.")
-    parser.add_argument("--mixed_precision", type=str, default="bf16", choices=["no", "fp16", "bf16"], help="Mixed precision training type. 'bf16' (recommended for Ampere+ GPUs), 'fp16', or 'no'.")
+    parser.add_argument("--train_batch_size", type=int, default=1, help="Batch size per device for training. Effective batch size is (train_batch_size * gradient_accumulation_steps * num_processes).")
+    parser.add_argument("--gradient_accumulation_steps", type=int, default=1, help="Number of updates steps to accumulate gradients before performing a backward/update pass.")
+    parser.add_argument("--max_grad_norm", type=float, default=1.0, help="Maximum gradient norm for clipping. Set to 0 or less to disable.")
+    parser.add_argument("--seed", type=int, default=42, help="Random seed for reproducibility across all processes.")
 
-    # Output and Saving
-    parser.add_argument("--save_model_as", type=str, default="safetensors", choices=["ckpt", "pt", "safetensors"], help="Desired format for saving (Note: `save_pretrained` default behavior is used, typically preferring SafeTensors if available).")
+    # Mixed Precision and Hardware
+    parser.add_argument("--mixed_precision", type=str, default="bf16", choices=["no", "fp16", "bf16"], help="Mixed precision training type, handled by Hugging Face Accelerate. 'bf16' is recommended for Ampere+ GPUs.")
 
-    # Sample Generation
-    parser.add_argument("--num_sample_answers", type=int, default=5, help="Number of image-answer sample pairs to generate and save after training.")
+    # PEFT (LoRA/QLoRA) Arguments
+    parser.add_argument("--use_peft", action='store_true', help="Enable PEFT (LoRA or QLoRA if quantization is also enabled) for parameter-efficient fine-tuning.")
+    parser.add_argument("--peft_lora_r", type=int, default=8, help="LoRA rank (dimension of the LoRA update matrices).")
+    parser.add_argument("--peft_lora_alpha", type=int, default=16, help="LoRA alpha scaling factor.")
+    parser.add_argument("--peft_lora_dropout", type=float, default=0.05, help="Dropout probability for LoRA layers.")
+    parser.add_argument("--peft_target_modules", type=str, nargs='*', default=["q_proj", "v_proj"], help="Space-separated list of module names within the base model to apply LoRA to. For SmolVLM, these are typically in the language_model component (e.g., 'language_model.model.layers.0.self_attn.q_proj'). Needs to be specific. Common examples: 'q_proj', 'v_proj', 'k_proj', 'o_proj', 'fc1', 'fc2'.")
+    
+    # Quantization (QLoRA) Arguments
+    parser.add_argument("--load_in_8bit", action='store_true', help="Load the base model in 8-bit precision for QLoRA. Requires bitsandbytes.")
+    parser.add_argument("--load_in_4bit", action='store_true', help="Load the base model in 4-bit precision for QLoRA (e.g., NF4). Requires bitsandbytes.")
+
+    # Checkpointing and Logging
+    parser.add_argument("--resume_from_checkpoint", type=str, default=None, help="Path to a checkpoint directory (created by a previous run of this script) to resume training from. Resumes model, optimizer, scheduler, processor, and tracker state.")
+    parser.add_argument("--save_every_n_steps", type=int, default=None, help="Save a checkpoint (full training state: model/adapter, optimizer, scheduler, processor, tracker) every N global optimizer steps. Overrides epoch-based saving if set.")
+    # parser.add_argument("--save_model_as", type=str, default="safetensors", choices=["ckpt", "pt", "safetensors"], help="Format for saving the full model (if not using PEFT). For PEFT, adapters are saved via save_pretrained in its standard format. `save_pretrained` default behavior is used, typically preferring SafeTensors if available.") # This argument is less relevant now, PEFT saves adapters in its own way. Keeping for full model saving if PEFT not used.
+    parser.add_argument("--log_with", type=str, default=None, choices=["tensorboard", "wandb", "all"], help="Logging tool to use (tensorboard, wandb, or all), integrated with Hugging Face Accelerate. Logs will be saved in a subfolder within `output_dir/output_name`. For wandb, ensure you are logged in (`wandb login`).")
+    
+    # Sample Generation (after training)
+    parser.add_argument("--num_sample_answers", type=int, default=5, help="Number of image-answer sample pairs to generate and save after training (on main process only).")
     parser.add_argument("--sample_max_new_tokens", type=int, default=100, help="Maximum number of new tokens to generate for each sample answer during inference.")
     
+    # Note: --save_model_as is implicitly handled by PEFT saving logic or standard save_pretrained.
+    # The argument below is kept for potential non-PEFT full model saving, though PEFT is the primary focus.
+    parser.add_argument("--save_model_as", type=str, default="safetensors", choices=["ckpt", "pt", "safetensors"], help="Format for saving the full model if not using PEFT. When using PEFT, adapters are saved in their standard format by `save_pretrained`. This argument primarily influences full model saves. SafeTensors is generally preferred.")
+
+
     # Unused arguments (placeholders for potential future compatibility)
     parser.add_argument("--incremental_reg_reload", action='store_true', help="Reload regularization images incrementally (Not implemented in this script).")
     parser.add_argument("--randomized_regularization_image", action='store_true', help="Randomize regularization images (Not implemented in this script).")
@@ -502,7 +644,9 @@ if __name__ == "__main__":
     final_output_dir_for_run = os.path.join(args.output_dir, args.output_name)
     if not os.path.exists(final_output_dir_for_run):
         os.makedirs(final_output_dir_for_run, exist_ok=True) # exist_ok=True in case of multi-process race (though not used here)
-        print(f"Created output directory for this run: {final_output_dir_for_run}")
+        # This print might happen before accelerator is ready, so keep it standard for now or ensure it's main process only.
+        if Accelerator().is_main_process: # Temp accelerator for early print
+             print(f"Created output directory for this run: {final_output_dir_for_run}")
     
     # Update args.output_dir to be this specific path for convenience within main()
     args.output_dir = final_output_dir_for_run
